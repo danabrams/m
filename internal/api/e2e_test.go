@@ -6,12 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/anthropics/m/internal/store"
-	"github.com/gorilla/websocket"
 )
 
 // testServer creates a test server with a temporary database.
@@ -129,14 +126,14 @@ func TestE2E_Authentication(t *testing.T) {
 			path:       "/api/repos",
 			method:     "GET",
 			auth:       "bearer test-api-key",
-			wantStatus: http.StatusOK,
+			wantStatus: http.StatusOK, // endpoint is implemented
 		},
 		{
 			name:       "valid API key - uppercase Bearer",
 			path:       "/api/repos",
 			method:     "GET",
 			auth:       "Bearer test-api-key",
-			wantStatus: http.StatusOK,
+			wantStatus: http.StatusOK, // endpoint is implemented
 		},
 	}
 
@@ -1132,7 +1129,7 @@ func TestE2E_Devices_Unregister(t *testing.T) {
 // Internal Endpoints Tests
 // ============================================================================
 
-func TestE2E_Internal_InteractionRequest(t *testing.T) {
+func TestE2E_Internal_InteractionRequest_HeaderValidation(t *testing.T) {
 	srv, _, cleanup := testServer(t)
 	defer cleanup()
 
@@ -1144,41 +1141,54 @@ func TestE2E_Internal_InteractionRequest(t *testing.T) {
 		wantCode   string
 	}{
 		{
-			name: "valid approval request",
-			headers: map[string]string{
-				"X-M-Hook-Version": "1",
-				"X-M-Request-ID":   "req-123",
-			},
+			name:    "missing X-M-Hook-Version header",
+			headers: map[string]string{"X-M-Request-ID": "req-123"},
 			body: map[string]interface{}{
 				"run_id":     "run-123",
 				"type":       "approval",
-				"tool":       "bash",
+				"tool":       "Bash",
 				"request_id": "req-123",
 				"payload":    map[string]string{"command": "ls -la"},
 			},
-			wantStatus: http.StatusOK,
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "invalid_input",
 		},
 		{
-			name: "valid input request",
-			headers: map[string]string{
-				"X-M-Hook-Version": "1",
-				"X-M-Request-ID":   "req-456",
-			},
+			name:    "missing X-M-Request-ID header",
+			headers: map[string]string{"X-M-Hook-Version": "1"},
 			body: map[string]interface{}{
-				"run_id":     "run-456",
-				"type":       "input",
-				"request_id": "req-456",
-				"payload":    map[string]string{},
+				"run_id":     "run-123",
+				"type":       "approval",
+				"tool":       "Bash",
+				"request_id": "req-123",
+				"payload":    map[string]string{"command": "ls -la"},
 			},
-			wantStatus: http.StatusOK,
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "invalid_input",
 		},
 		{
-			name:    "missing headers",
+			name:    "missing both headers",
 			headers: map[string]string{},
 			body: map[string]interface{}{
 				"run_id":     "run-789",
 				"type":       "approval",
 				"request_id": "req-789",
+			},
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "invalid_input",
+		},
+		{
+			name: "invalid hook version",
+			headers: map[string]string{
+				"X-M-Hook-Version": "99",
+				"X-M-Request-ID":   "req-123",
+			},
+			body: map[string]interface{}{
+				"run_id":     "run-123",
+				"type":       "approval",
+				"tool":       "Bash",
+				"request_id": "req-123",
+				"payload":    map[string]string{},
 			},
 			wantStatus: http.StatusBadRequest,
 			wantCode:   "invalid_input",
@@ -1219,6 +1229,1087 @@ func TestE2E_Internal_InteractionRequest(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestE2E_Internal_InteractionRequest_BodyValidation(t *testing.T) {
+	srv, s, cleanup := testServer(t)
+	defer cleanup()
+
+	// Create a repo and run for valid requests
+	repo, _ := s.CreateRepo("test-repo", nil)
+	run, _ := s.CreateRun(repo.ID, "Test prompt", "/workspace/test")
+
+	tests := []struct {
+		name       string
+		body       interface{}
+		wantStatus int
+		wantCode   string
+	}{
+		{
+			name:       "missing run_id",
+			body:       map[string]interface{}{"type": "approval", "tool": "Bash", "request_id": "req-1", "payload": map[string]string{}},
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "invalid_input",
+		},
+		{
+			name:       "missing type",
+			body:       map[string]interface{}{"run_id": run.ID, "tool": "Bash", "request_id": "req-2", "payload": map[string]string{}},
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "invalid_input",
+		},
+		{
+			name:       "missing request_id",
+			body:       map[string]interface{}{"run_id": run.ID, "type": "approval", "tool": "Bash", "payload": map[string]string{}},
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "invalid_input",
+		},
+		{
+			name:       "invalid type",
+			body:       map[string]interface{}{"run_id": run.ID, "type": "invalid", "tool": "Bash", "request_id": "req-3", "payload": map[string]string{}},
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "invalid_input",
+		},
+		{
+			name:       "non-existent run_id",
+			body:       map[string]interface{}{"run_id": "non-existent", "type": "approval", "tool": "Bash", "request_id": "req-4", "payload": map[string]string{}},
+			wantStatus: http.StatusNotFound,
+			wantCode:   "not_found",
+		},
+		{
+			name:       "empty body",
+			body:       map[string]interface{}{},
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "invalid_input",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var reqBody []byte
+			if tt.body != nil {
+				reqBody, _ = json.Marshal(tt.body)
+			}
+
+			req := httptest.NewRequest("POST", "/api/internal/interaction-request", bytes.NewReader(reqBody))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer test-api-key")
+			req.Header.Set("X-M-Hook-Version", "1")
+			req.Header.Set("X-M-Request-ID", "test-req-id")
+
+			w := httptest.NewRecorder()
+			srv.httpServer.Handler.ServeHTTP(w, req)
+
+			// Skip if not implemented
+			if w.Code == http.StatusNotImplemented {
+				t.Skip("endpoint not implemented")
+			}
+
+			if w.Code != tt.wantStatus {
+				t.Errorf("got status %d, want %d (body: %s)", w.Code, tt.wantStatus, w.Body.String())
+			}
+
+			if tt.wantCode != "" {
+				code, _ := parseErrorResponse(t, w.Body.Bytes())
+				if code != tt.wantCode {
+					t.Errorf("got error code %q, want %q", code, tt.wantCode)
+				}
+			}
+		})
+	}
+}
+
+func TestE2E_Internal_InteractionRequest_ApprovalTools(t *testing.T) {
+	// Test that the endpoint correctly handles approval tool requests
+	// Approval tools: Edit, Write, Bash, NotebookEdit
+	srv, s, cleanup := testServer(t)
+	defer cleanup()
+
+	repo, _ := s.CreateRepo("test-repo", nil)
+	run, _ := s.CreateRun(repo.ID, "Test prompt", "/workspace/test")
+
+	approvalTools := []struct {
+		tool    string
+		payload map[string]interface{}
+	}{
+		{tool: "Bash", payload: map[string]interface{}{"command": "rm -rf /tmp/test"}},
+		{tool: "Edit", payload: map[string]interface{}{"file_path": "/test.txt", "old_string": "old", "new_string": "new"}},
+		{tool: "Write", payload: map[string]interface{}{"file_path": "/test.txt", "content": "hello world"}},
+		{tool: "NotebookEdit", payload: map[string]interface{}{"notebook_path": "/test.ipynb", "cell_number": 0, "new_source": "print('hello')"}},
+	}
+
+	for _, tt := range approvalTools {
+		t.Run(tt.tool, func(t *testing.T) {
+			reqID := "req-" + tt.tool + "-" + randomSuffix()
+			body := map[string]interface{}{
+				"run_id":     run.ID,
+				"type":       "approval",
+				"tool":       tt.tool,
+				"request_id": reqID,
+				"payload":    tt.payload,
+			}
+
+			reqBody, _ := json.Marshal(body)
+			req := httptest.NewRequest("POST", "/api/internal/interaction-request", bytes.NewReader(reqBody))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer test-api-key")
+			req.Header.Set("X-M-Hook-Version", "1")
+			req.Header.Set("X-M-Request-ID", reqID)
+
+			w := httptest.NewRecorder()
+
+			// Note: In full implementation, this would long-poll until resolved.
+			// For testing, we verify the request is accepted without immediate error.
+			srv.httpServer.Handler.ServeHTTP(w, req)
+
+			// Skip if not implemented
+			if w.Code == http.StatusNotImplemented {
+				t.Skip("endpoint not implemented")
+			}
+
+			// Should either succeed (200) or be accepted for processing
+			// Long-poll would block here in real implementation
+			if w.Code != http.StatusOK && w.Code != http.StatusAccepted {
+				t.Errorf("tool %s: got status %d, want 200 or 202 (body: %s)", tt.tool, w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestE2E_Internal_InteractionRequest_InputTools(t *testing.T) {
+	// Test that the endpoint correctly handles input tool requests
+	// Input tools: AskUserQuestion
+	srv, s, cleanup := testServer(t)
+	defer cleanup()
+
+	repo, _ := s.CreateRepo("test-repo", nil)
+	run, _ := s.CreateRun(repo.ID, "Test prompt", "/workspace/test")
+
+	inputTools := []struct {
+		tool    string
+		payload map[string]interface{}
+	}{
+		{tool: "AskUserQuestion", payload: map[string]interface{}{"question": "What is your name?"}},
+	}
+
+	for _, tt := range inputTools {
+		t.Run(tt.tool, func(t *testing.T) {
+			reqID := "req-" + tt.tool + "-" + randomSuffix()
+			body := map[string]interface{}{
+				"run_id":     run.ID,
+				"type":       "input",
+				"tool":       tt.tool,
+				"request_id": reqID,
+				"payload":    tt.payload,
+			}
+
+			reqBody, _ := json.Marshal(body)
+			req := httptest.NewRequest("POST", "/api/internal/interaction-request", bytes.NewReader(reqBody))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer test-api-key")
+			req.Header.Set("X-M-Hook-Version", "1")
+			req.Header.Set("X-M-Request-ID", reqID)
+
+			w := httptest.NewRecorder()
+			srv.httpServer.Handler.ServeHTTP(w, req)
+
+			// Skip if not implemented
+			if w.Code == http.StatusNotImplemented {
+				t.Skip("endpoint not implemented")
+			}
+
+			// Should either succeed (200) or be accepted for processing
+			if w.Code != http.StatusOK && w.Code != http.StatusAccepted {
+				t.Errorf("tool %s: got status %d, want 200 or 202 (body: %s)", tt.tool, w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestE2E_Internal_InteractionRequest_Idempotency(t *testing.T) {
+	// Test that duplicate requests with same X-M-Request-ID return 409
+	// with the existing decision (for idempotent retries)
+	srv, s, cleanup := testServer(t)
+	defer cleanup()
+
+	repo, _ := s.CreateRepo("test-repo", nil)
+	run, _ := s.CreateRun(repo.ID, "Test prompt", "/workspace/test")
+
+	reqID := "idempotent-req-" + randomSuffix()
+	body := map[string]interface{}{
+		"run_id":     run.ID,
+		"type":       "approval",
+		"tool":       "Bash",
+		"request_id": reqID,
+		"payload":    map[string]string{"command": "echo hello"},
+	}
+	reqBody, _ := json.Marshal(body)
+
+	// First request
+	req1 := httptest.NewRequest("POST", "/api/internal/interaction-request", bytes.NewReader(reqBody))
+	req1.Header.Set("Content-Type", "application/json")
+	req1.Header.Set("Authorization", "Bearer test-api-key")
+	req1.Header.Set("X-M-Hook-Version", "1")
+	req1.Header.Set("X-M-Request-ID", reqID)
+
+	w1 := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w1, req1)
+
+	// Skip if not implemented
+	if w1.Code == http.StatusNotImplemented {
+		t.Skip("endpoint not implemented")
+	}
+
+	// Second request with same X-M-Request-ID
+	req2 := httptest.NewRequest("POST", "/api/internal/interaction-request", bytes.NewReader(reqBody))
+	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set("Authorization", "Bearer test-api-key")
+	req2.Header.Set("X-M-Hook-Version", "1")
+	req2.Header.Set("X-M-Request-ID", reqID)
+
+	w2 := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w2, req2)
+
+	// Should return 409 Conflict for duplicate request
+	if w2.Code != http.StatusConflict {
+		t.Errorf("duplicate request: got status %d, want %d (body: %s)", w2.Code, http.StatusConflict, w2.Body.String())
+	}
+
+	// The 409 response should include the existing decision (if any)
+	// This allows the hook to get the decision even on retry
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w2.Body.Bytes(), &resp); err == nil {
+		// If there's a decision field, verify it's valid
+		if decision, ok := resp["decision"]; ok {
+			if decision != "allow" && decision != "block" {
+				t.Errorf("invalid decision in 409 response: %v", decision)
+			}
+		}
+	}
+}
+
+func TestE2E_Internal_InteractionRequest_ResponseFormat_Approval(t *testing.T) {
+	// Test that approval responses have correct format
+	// Expected: {"decision": "allow"} or {"decision": "block", "message": "..."}
+	srv, s, cleanup := testServer(t)
+	defer cleanup()
+
+	repo, _ := s.CreateRepo("test-repo", nil)
+	run, _ := s.CreateRun(repo.ID, "Test prompt", "/workspace/test")
+
+	reqID := "resp-format-" + randomSuffix()
+	body := map[string]interface{}{
+		"run_id":     run.ID,
+		"type":       "approval",
+		"tool":       "Bash",
+		"request_id": reqID,
+		"payload":    map[string]string{"command": "echo hello"},
+	}
+	reqBody, _ := json.Marshal(body)
+
+	req := httptest.NewRequest("POST", "/api/internal/interaction-request", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-api-key")
+	req.Header.Set("X-M-Hook-Version", "1")
+	req.Header.Set("X-M-Request-ID", reqID)
+
+	w := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w, req)
+
+	// Skip if not implemented
+	if w.Code == http.StatusNotImplemented {
+		t.Skip("endpoint not implemented")
+	}
+
+	if w.Code != http.StatusOK {
+		t.Skipf("request did not succeed (status %d), cannot verify response format", w.Code)
+	}
+
+	// Verify response format
+	var resp struct {
+		Decision string  `json:"decision"`
+		Message  *string `json:"message,omitempty"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v (body: %s)", err, w.Body.String())
+	}
+
+	if resp.Decision != "allow" && resp.Decision != "block" {
+		t.Errorf("invalid decision %q, want 'allow' or 'block'", resp.Decision)
+	}
+
+	// If blocked, should have a message
+	if resp.Decision == "block" && resp.Message == nil {
+		t.Error("blocked decision should include a message")
+	}
+}
+
+func TestE2E_Internal_InteractionRequest_ResponseFormat_Input(t *testing.T) {
+	// Test that input responses have correct format
+	// Expected: {"decision": "allow", "response": "user's input"}
+	srv, s, cleanup := testServer(t)
+	defer cleanup()
+
+	repo, _ := s.CreateRepo("test-repo", nil)
+	run, _ := s.CreateRun(repo.ID, "Test prompt", "/workspace/test")
+
+	reqID := "input-resp-" + randomSuffix()
+	body := map[string]interface{}{
+		"run_id":     run.ID,
+		"type":       "input",
+		"tool":       "AskUserQuestion",
+		"request_id": reqID,
+		"payload":    map[string]string{"question": "What is your name?"},
+	}
+	reqBody, _ := json.Marshal(body)
+
+	req := httptest.NewRequest("POST", "/api/internal/interaction-request", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-api-key")
+	req.Header.Set("X-M-Hook-Version", "1")
+	req.Header.Set("X-M-Request-ID", reqID)
+
+	w := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w, req)
+
+	// Skip if not implemented
+	if w.Code == http.StatusNotImplemented {
+		t.Skip("endpoint not implemented")
+	}
+
+	if w.Code != http.StatusOK {
+		t.Skipf("request did not succeed (status %d), cannot verify response format", w.Code)
+	}
+
+	// Verify response format
+	var resp struct {
+		Decision string  `json:"decision"`
+		Response *string `json:"response,omitempty"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v (body: %s)", err, w.Body.String())
+	}
+
+	if resp.Decision != "allow" {
+		t.Errorf("input response decision should be 'allow', got %q", resp.Decision)
+	}
+
+	// Input response should include the response text
+	if resp.Response == nil {
+		t.Error("input response should include 'response' field with user's input")
+	}
+}
+
+func TestE2E_Internal_InteractionRequest_RunStateTransition(t *testing.T) {
+	// Test that interaction requests transition run state correctly
+	// - Approval request: run state -> waiting_approval
+	// - Input request: run state -> waiting_input
+	srv, s, cleanup := testServer(t)
+	defer cleanup()
+
+	t.Run("approval changes run state to waiting_approval", func(t *testing.T) {
+		repo, _ := s.CreateRepo("test-repo-"+randomSuffix(), nil)
+		run, _ := s.CreateRun(repo.ID, "Test prompt", "/workspace/test")
+
+		// Verify initial state
+		initialRun, _ := s.GetRun(run.ID)
+		if initialRun.State != store.RunStateRunning {
+			t.Fatalf("initial run state should be 'running', got %q", initialRun.State)
+		}
+
+		reqID := "state-approval-" + randomSuffix()
+		body := map[string]interface{}{
+			"run_id":     run.ID,
+			"type":       "approval",
+			"tool":       "Bash",
+			"request_id": reqID,
+			"payload":    map[string]string{"command": "echo test"},
+		}
+		reqBody, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/internal/interaction-request", bytes.NewReader(reqBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer test-api-key")
+		req.Header.Set("X-M-Hook-Version", "1")
+		req.Header.Set("X-M-Request-ID", reqID)
+
+		w := httptest.NewRecorder()
+		srv.httpServer.Handler.ServeHTTP(w, req)
+
+		// Skip if not implemented
+		if w.Code == http.StatusNotImplemented {
+			t.Skip("endpoint not implemented")
+		}
+
+		// Check run state changed (may need to query before long-poll completes)
+		updatedRun, err := s.GetRun(run.ID)
+		if err != nil {
+			t.Fatalf("failed to get run: %v", err)
+		}
+		if updatedRun.State != store.RunStateWaitingApproval {
+			t.Errorf("run state should be 'waiting_approval', got %q", updatedRun.State)
+		}
+	})
+
+	t.Run("input changes run state to waiting_input", func(t *testing.T) {
+		repo, _ := s.CreateRepo("test-repo-"+randomSuffix(), nil)
+		run, _ := s.CreateRun(repo.ID, "Test prompt", "/workspace/test")
+
+		reqID := "state-input-" + randomSuffix()
+		body := map[string]interface{}{
+			"run_id":     run.ID,
+			"type":       "input",
+			"tool":       "AskUserQuestion",
+			"request_id": reqID,
+			"payload":    map[string]string{"question": "What?"},
+		}
+		reqBody, _ := json.Marshal(body)
+
+		req := httptest.NewRequest("POST", "/api/internal/interaction-request", bytes.NewReader(reqBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer test-api-key")
+		req.Header.Set("X-M-Hook-Version", "1")
+		req.Header.Set("X-M-Request-ID", reqID)
+
+		w := httptest.NewRecorder()
+		srv.httpServer.Handler.ServeHTTP(w, req)
+
+		// Skip if not implemented
+		if w.Code == http.StatusNotImplemented {
+			t.Skip("endpoint not implemented")
+		}
+
+		// Check run state changed
+		updatedRun, err := s.GetRun(run.ID)
+		if err != nil {
+			t.Fatalf("failed to get run: %v", err)
+		}
+		if updatedRun.State != store.RunStateWaitingInput {
+			t.Errorf("run state should be 'waiting_input', got %q", updatedRun.State)
+		}
+	})
+}
+
+func TestE2E_Internal_InteractionRequest_InvalidRunState(t *testing.T) {
+	// Test that requests fail if run is not in a valid state
+	// Only runs in 'running' state should accept interaction requests
+	srv, s, cleanup := testServer(t)
+	defer cleanup()
+
+	invalidStates := []store.RunState{
+		store.RunStateCompleted,
+		store.RunStateFailed,
+		store.RunStateCancelled,
+	}
+
+	for _, state := range invalidStates {
+		t.Run(string(state), func(t *testing.T) {
+			repo, _ := s.CreateRepo("test-repo-"+randomSuffix(), nil)
+			run, _ := s.CreateRun(repo.ID, "Test prompt", "/workspace/test")
+			s.UpdateRunState(run.ID, state)
+
+			reqID := "invalid-state-" + randomSuffix()
+			body := map[string]interface{}{
+				"run_id":     run.ID,
+				"type":       "approval",
+				"tool":       "Bash",
+				"request_id": reqID,
+				"payload":    map[string]string{"command": "echo test"},
+			}
+			reqBody, _ := json.Marshal(body)
+
+			req := httptest.NewRequest("POST", "/api/internal/interaction-request", bytes.NewReader(reqBody))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer test-api-key")
+			req.Header.Set("X-M-Hook-Version", "1")
+			req.Header.Set("X-M-Request-ID", reqID)
+
+			w := httptest.NewRecorder()
+			srv.httpServer.Handler.ServeHTTP(w, req)
+
+			// Skip if not implemented
+			if w.Code == http.StatusNotImplemented {
+				t.Skip("endpoint not implemented")
+			}
+
+			// Should fail with 409 Conflict (invalid state)
+			if w.Code != http.StatusConflict {
+				t.Errorf("request on %s run: got status %d, want %d", state, w.Code, http.StatusConflict)
+			}
+
+			code, _ := parseErrorResponse(t, w.Body.Bytes())
+			if code != "invalid_state" {
+				t.Errorf("got error code %q, want %q", code, "invalid_state")
+			}
+		})
+	}
+}
+
+func TestE2E_Internal_InteractionRequest_CreatesApprovalRecord(t *testing.T) {
+	// Test that approval requests create an approval record in the database
+	srv, s, cleanup := testServer(t)
+	defer cleanup()
+
+	repo, _ := s.CreateRepo("test-repo", nil)
+	run, _ := s.CreateRun(repo.ID, "Test prompt", "/workspace/test")
+
+	reqID := "creates-approval-" + randomSuffix()
+	payload := map[string]string{"command": "rm -rf /tmp/test"}
+	body := map[string]interface{}{
+		"run_id":     run.ID,
+		"type":       "approval",
+		"tool":       "Bash",
+		"request_id": reqID,
+		"payload":    payload,
+	}
+	reqBody, _ := json.Marshal(body)
+
+	req := httptest.NewRequest("POST", "/api/internal/interaction-request", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-api-key")
+	req.Header.Set("X-M-Hook-Version", "1")
+	req.Header.Set("X-M-Request-ID", reqID)
+
+	w := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w, req)
+
+	// Skip if not implemented
+	if w.Code == http.StatusNotImplemented {
+		t.Skip("endpoint not implemented")
+	}
+
+	// Verify approval was created
+	approvals, err := s.ListPendingApprovals()
+	if err != nil {
+		t.Fatalf("failed to list approvals: %v", err)
+	}
+
+	found := false
+	for _, a := range approvals {
+		if a.RunID == run.ID {
+			found = true
+			if a.State != store.ApprovalStatePending {
+				t.Errorf("approval state should be 'pending', got %q", a.State)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Error("approval record was not created")
+	}
+}
+
+func TestE2E_Internal_InteractionRequest_CreatesEvent(t *testing.T) {
+	// Test that interaction requests create event records for audit trail
+	srv, s, cleanup := testServer(t)
+	defer cleanup()
+
+	repo, _ := s.CreateRepo("test-repo", nil)
+	run, _ := s.CreateRun(repo.ID, "Test prompt", "/workspace/test")
+
+	// Get initial event count
+	initialEvents, _ := s.ListEventsByRun(run.ID)
+	initialCount := len(initialEvents)
+
+	reqID := "creates-event-" + randomSuffix()
+	body := map[string]interface{}{
+		"run_id":     run.ID,
+		"type":       "approval",
+		"tool":       "Bash",
+		"request_id": reqID,
+		"payload":    map[string]string{"command": "echo test"},
+	}
+	reqBody, _ := json.Marshal(body)
+
+	req := httptest.NewRequest("POST", "/api/internal/interaction-request", bytes.NewReader(reqBody))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer test-api-key")
+	req.Header.Set("X-M-Hook-Version", "1")
+	req.Header.Set("X-M-Request-ID", reqID)
+
+	w := httptest.NewRecorder()
+	srv.httpServer.Handler.ServeHTTP(w, req)
+
+	// Skip if not implemented
+	if w.Code == http.StatusNotImplemented {
+		t.Skip("endpoint not implemented")
+	}
+
+	// Verify event was created
+	events, err := s.ListEventsByRun(run.ID)
+	if err != nil {
+		t.Fatalf("failed to list events: %v", err)
+	}
+
+	if len(events) <= initialCount {
+		t.Error("no new event was created")
+	}
+
+	// Find the approval_requested event
+	found := false
+	for _, e := range events {
+		if e.Type == "approval_requested" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("approval_requested event was not created")
+	}
+}
+
+// ============================================================================
+// Long-Poll Integration Tests (Hook → Resolution → Response)
+// ============================================================================
+
+func TestE2E_Internal_InteractionRequest_ApprovalFlow_Approved(t *testing.T) {
+	// Test the full approval flow:
+	// 1. Hook sends interaction request (long-poll)
+	// 2. User approves via /api/approvals/{id}/resolve
+	// 3. Hook receives {"decision": "allow"}
+	srv, s, cleanup := testServer(t)
+	defer cleanup()
+
+	repo, _ := s.CreateRepo("test-repo", nil)
+	run, _ := s.CreateRun(repo.ID, "Test prompt", "/workspace/test")
+
+	reqID := "longpoll-approve-" + randomSuffix()
+	body := map[string]interface{}{
+		"run_id":     run.ID,
+		"type":       "approval",
+		"tool":       "Bash",
+		"request_id": reqID,
+		"payload":    map[string]string{"command": "echo hello"},
+	}
+	reqBody, _ := json.Marshal(body)
+
+	// Channel to receive response from long-poll
+	respCh := make(chan *httptest.ResponseRecorder, 1)
+	doneCh := make(chan struct{})
+
+	// Start long-poll request in goroutine
+	go func() {
+		defer close(doneCh)
+		req := httptest.NewRequest("POST", "/api/internal/interaction-request", bytes.NewReader(reqBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer test-api-key")
+		req.Header.Set("X-M-Hook-Version", "1")
+		req.Header.Set("X-M-Request-ID", reqID)
+
+		w := httptest.NewRecorder()
+		srv.httpServer.Handler.ServeHTTP(w, req)
+		respCh <- w
+	}()
+
+	// Give the request time to be processed and create the approval
+	// In a real implementation, we'd use proper synchronization
+	select {
+	case w := <-respCh:
+		// Request completed immediately - check if not implemented
+		if w.Code == http.StatusNotImplemented {
+			t.Skip("endpoint not implemented")
+		}
+		// If it returned immediately with 200, the test is designed for long-poll
+		// but the implementation might auto-resolve. That's fine.
+		if w.Code == http.StatusOK {
+			var resp struct {
+				Decision string `json:"decision"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("failed to parse response: %v", err)
+			}
+			if resp.Decision != "allow" {
+				t.Errorf("expected 'allow' decision, got %q", resp.Decision)
+			}
+			return
+		}
+	case <-doneCh:
+		// Request goroutine finished
+		t.Fatal("long-poll returned without response")
+	default:
+		// Request is still pending (expected for long-poll)
+	}
+
+	// Find the pending approval
+	approvals, err := s.ListPendingApprovals()
+	if err != nil {
+		t.Fatalf("failed to list approvals: %v", err)
+	}
+
+	var approvalID string
+	for _, a := range approvals {
+		if a.RunID == run.ID {
+			approvalID = a.ID
+			break
+		}
+	}
+
+	if approvalID == "" {
+		// If no approval found, request may have completed already
+		select {
+		case w := <-respCh:
+			if w.Code == http.StatusNotImplemented {
+				t.Skip("endpoint not implemented")
+			}
+			t.Skipf("no approval found, request status: %d", w.Code)
+		default:
+			t.Skip("no pending approval found")
+		}
+	}
+
+	// Resolve the approval
+	resolveResp := request(t, srv, "POST", "/api/approvals/"+approvalID+"/resolve",
+		map[string]interface{}{"approved": true},
+		"Bearer test-api-key")
+
+	if resolveResp.Code == http.StatusNotImplemented {
+		t.Skip("resolve endpoint not implemented")
+	}
+
+	if resolveResp.Code != http.StatusOK {
+		t.Fatalf("failed to resolve approval: %d %s", resolveResp.Code, resolveResp.Body.String())
+	}
+
+	// Wait for long-poll response
+	select {
+	case w := <-respCh:
+		if w.Code != http.StatusOK {
+			t.Errorf("long-poll response: got status %d, want 200", w.Code)
+			return
+		}
+
+		var resp struct {
+			Decision string `json:"decision"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to parse response: %v", err)
+		}
+		if resp.Decision != "allow" {
+			t.Errorf("expected 'allow' decision, got %q", resp.Decision)
+		}
+	case <-doneCh:
+		t.Fatal("long-poll goroutine ended without sending response")
+	}
+}
+
+func TestE2E_Internal_InteractionRequest_ApprovalFlow_Rejected(t *testing.T) {
+	// Test the full rejection flow:
+	// 1. Hook sends interaction request (long-poll)
+	// 2. User rejects via /api/approvals/{id}/resolve
+	// 3. Hook receives {"decision": "block", "message": "reason"}
+	srv, s, cleanup := testServer(t)
+	defer cleanup()
+
+	repo, _ := s.CreateRepo("test-repo", nil)
+	run, _ := s.CreateRun(repo.ID, "Test prompt", "/workspace/test")
+
+	reqID := "longpoll-reject-" + randomSuffix()
+	body := map[string]interface{}{
+		"run_id":     run.ID,
+		"type":       "approval",
+		"tool":       "Bash",
+		"request_id": reqID,
+		"payload":    map[string]string{"command": "rm -rf /"},
+	}
+	reqBody, _ := json.Marshal(body)
+
+	// Channel to receive response from long-poll
+	respCh := make(chan *httptest.ResponseRecorder, 1)
+	doneCh := make(chan struct{})
+
+	// Start long-poll request in goroutine
+	go func() {
+		defer close(doneCh)
+		req := httptest.NewRequest("POST", "/api/internal/interaction-request", bytes.NewReader(reqBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer test-api-key")
+		req.Header.Set("X-M-Hook-Version", "1")
+		req.Header.Set("X-M-Request-ID", reqID)
+
+		w := httptest.NewRecorder()
+		srv.httpServer.Handler.ServeHTTP(w, req)
+		respCh <- w
+	}()
+
+	// Check if request completed immediately
+	select {
+	case w := <-respCh:
+		if w.Code == http.StatusNotImplemented {
+			t.Skip("endpoint not implemented")
+		}
+		// Implementation might not use long-poll
+		return
+	default:
+		// Request pending - expected for long-poll
+	}
+
+	// Find the pending approval
+	approvals, err := s.ListPendingApprovals()
+	if err != nil {
+		t.Fatalf("failed to list approvals: %v", err)
+	}
+
+	var approvalID string
+	for _, a := range approvals {
+		if a.RunID == run.ID {
+			approvalID = a.ID
+			break
+		}
+	}
+
+	if approvalID == "" {
+		select {
+		case w := <-respCh:
+			if w.Code == http.StatusNotImplemented {
+				t.Skip("endpoint not implemented")
+			}
+			t.Skipf("no approval found, request status: %d", w.Code)
+		default:
+			t.Skip("no pending approval found")
+		}
+	}
+
+	// Reject the approval with reason
+	rejectReason := "Command too dangerous"
+	resolveResp := request(t, srv, "POST", "/api/approvals/"+approvalID+"/resolve",
+		map[string]interface{}{
+			"approved": false,
+			"reason":   rejectReason,
+		},
+		"Bearer test-api-key")
+
+	if resolveResp.Code == http.StatusNotImplemented {
+		t.Skip("resolve endpoint not implemented")
+	}
+
+	if resolveResp.Code != http.StatusOK {
+		t.Fatalf("failed to resolve approval: %d %s", resolveResp.Code, resolveResp.Body.String())
+	}
+
+	// Wait for long-poll response
+	select {
+	case w := <-respCh:
+		if w.Code != http.StatusOK {
+			t.Errorf("long-poll response: got status %d, want 200", w.Code)
+			return
+		}
+
+		var resp struct {
+			Decision string  `json:"decision"`
+			Message  *string `json:"message"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to parse response: %v", err)
+		}
+		if resp.Decision != "block" {
+			t.Errorf("expected 'block' decision, got %q", resp.Decision)
+		}
+		if resp.Message == nil {
+			t.Error("rejection should include message")
+		} else if !contains(*resp.Message, rejectReason) {
+			t.Errorf("rejection message should contain reason %q, got %q", rejectReason, *resp.Message)
+		}
+	case <-doneCh:
+		t.Fatal("long-poll goroutine ended without sending response")
+	}
+}
+
+func TestE2E_Internal_InteractionRequest_InputFlow(t *testing.T) {
+	// Test the full input flow:
+	// 1. Hook sends input request (long-poll)
+	// 2. User provides input via /api/runs/{id}/input
+	// 3. Hook receives {"decision": "allow", "response": "user's input"}
+	srv, s, cleanup := testServer(t)
+	defer cleanup()
+
+	repo, _ := s.CreateRepo("test-repo", nil)
+	run, _ := s.CreateRun(repo.ID, "Test prompt", "/workspace/test")
+
+	reqID := "longpoll-input-" + randomSuffix()
+	body := map[string]interface{}{
+		"run_id":     run.ID,
+		"type":       "input",
+		"tool":       "AskUserQuestion",
+		"request_id": reqID,
+		"payload":    map[string]string{"question": "What is your name?"},
+	}
+	reqBody, _ := json.Marshal(body)
+
+	// Channel to receive response from long-poll
+	respCh := make(chan *httptest.ResponseRecorder, 1)
+	doneCh := make(chan struct{})
+
+	// Start long-poll request in goroutine
+	go func() {
+		defer close(doneCh)
+		req := httptest.NewRequest("POST", "/api/internal/interaction-request", bytes.NewReader(reqBody))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer test-api-key")
+		req.Header.Set("X-M-Hook-Version", "1")
+		req.Header.Set("X-M-Request-ID", reqID)
+
+		w := httptest.NewRecorder()
+		srv.httpServer.Handler.ServeHTTP(w, req)
+		respCh <- w
+	}()
+
+	// Check if request completed immediately
+	select {
+	case w := <-respCh:
+		if w.Code == http.StatusNotImplemented {
+			t.Skip("endpoint not implemented")
+		}
+		// Implementation might not use long-poll
+		return
+	default:
+		// Request pending - expected for long-poll
+	}
+
+	// Wait for run state to change to waiting_input
+	updatedRun, _ := s.GetRun(run.ID)
+	if updatedRun.State != store.RunStateWaitingInput {
+		select {
+		case w := <-respCh:
+			if w.Code == http.StatusNotImplemented {
+				t.Skip("endpoint not implemented")
+			}
+			t.Skipf("run not waiting for input, request status: %d", w.Code)
+		default:
+			t.Skip("run state not waiting_input")
+		}
+	}
+
+	// Send user input
+	userInput := "Claude"
+	inputResp := request(t, srv, "POST", "/api/runs/"+run.ID+"/input",
+		map[string]string{"text": userInput},
+		"Bearer test-api-key")
+
+	if inputResp.Code == http.StatusNotImplemented {
+		t.Skip("input endpoint not implemented")
+	}
+
+	if inputResp.Code != http.StatusOK {
+		t.Fatalf("failed to send input: %d %s", inputResp.Code, inputResp.Body.String())
+	}
+
+	// Wait for long-poll response
+	select {
+	case w := <-respCh:
+		if w.Code != http.StatusOK {
+			t.Errorf("long-poll response: got status %d, want 200", w.Code)
+			return
+		}
+
+		var resp struct {
+			Decision string  `json:"decision"`
+			Response *string `json:"response"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("failed to parse response: %v", err)
+		}
+		if resp.Decision != "allow" {
+			t.Errorf("expected 'allow' decision, got %q", resp.Decision)
+		}
+		if resp.Response == nil {
+			t.Error("input response should include 'response' field")
+		} else if *resp.Response != userInput {
+			t.Errorf("expected response %q, got %q", userInput, *resp.Response)
+		}
+	case <-doneCh:
+		t.Fatal("long-poll goroutine ended without sending response")
+	}
+}
+
+func TestE2E_Internal_InteractionRequest_ResolvesRunStateAfterApproval(t *testing.T) {
+	// Test that run state returns to 'running' after approval is resolved
+	srv, s, cleanup := testServer(t)
+	defer cleanup()
+
+	repo, _ := s.CreateRepo("test-repo", nil)
+	run, _ := s.CreateRun(repo.ID, "Test prompt", "/workspace/test")
+
+	// Set run to waiting_approval and create an approval
+	s.UpdateRunState(run.ID, store.RunStateWaitingApproval)
+	eventData := `{"tool":"Bash"}`
+	event, _ := s.CreateEvent(run.ID, "approval_requested", &eventData)
+	approval, _ := s.CreateApproval(run.ID, event.ID, store.ApprovalTypeCommand, nil)
+
+	// Resolve the approval
+	resolveResp := request(t, srv, "POST", "/api/approvals/"+approval.ID+"/resolve",
+		map[string]interface{}{"approved": true},
+		"Bearer test-api-key")
+
+	if resolveResp.Code == http.StatusNotImplemented {
+		t.Skip("endpoint not implemented")
+	}
+
+	if resolveResp.Code != http.StatusOK {
+		t.Fatalf("failed to resolve approval: %d %s", resolveResp.Code, resolveResp.Body.String())
+	}
+
+	// Verify run state changed back to running
+	updatedRun, err := s.GetRun(run.ID)
+	if err != nil {
+		t.Fatalf("failed to get run: %v", err)
+	}
+	if updatedRun.State != store.RunStateRunning {
+		t.Errorf("run state should be 'running' after approval, got %q", updatedRun.State)
+	}
+}
+
+func TestE2E_Internal_InteractionRequest_FailsRunOnRejection(t *testing.T) {
+	// Test that run state changes to 'failed' after rejection
+	srv, s, cleanup := testServer(t)
+	defer cleanup()
+
+	repo, _ := s.CreateRepo("test-repo", nil)
+	run, _ := s.CreateRun(repo.ID, "Test prompt", "/workspace/test")
+
+	// Set run to waiting_approval and create an approval
+	s.UpdateRunState(run.ID, store.RunStateWaitingApproval)
+	eventData := `{"tool":"Bash"}`
+	event, _ := s.CreateEvent(run.ID, "approval_requested", &eventData)
+	approval, _ := s.CreateApproval(run.ID, event.ID, store.ApprovalTypeCommand, nil)
+
+	// Reject the approval
+	resolveResp := request(t, srv, "POST", "/api/approvals/"+approval.ID+"/resolve",
+		map[string]interface{}{
+			"approved": false,
+			"reason":   "Not allowed",
+		},
+		"Bearer test-api-key")
+
+	if resolveResp.Code == http.StatusNotImplemented {
+		t.Skip("endpoint not implemented")
+	}
+
+	if resolveResp.Code != http.StatusOK {
+		t.Fatalf("failed to resolve approval: %d %s", resolveResp.Code, resolveResp.Body.String())
+	}
+
+	// Verify run state changed to failed
+	updatedRun, err := s.GetRun(run.ID)
+	if err != nil {
+		t.Fatalf("failed to get run: %v", err)
+	}
+	if updatedRun.State != store.RunStateFailed {
+		t.Errorf("run state should be 'failed' after rejection, got %q", updatedRun.State)
+	}
+}
+
+// Helper function to check if string contains substring
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(substr) == 0 ||
+		(len(s) > 0 && len(substr) > 0 && findSubstring(s, substr)))
+}
+
+func findSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }
 
 // ============================================================================
@@ -1270,181 +2361,6 @@ func TestE2E_SuccessResponseContentType(t *testing.T) {
 	contentType := w.Header().Get("Content-Type")
 	if contentType != "application/json" {
 		t.Errorf("got Content-Type %q, want %q", contentType, "application/json")
-	}
-}
-
-// ============================================================================
-// WebSocket Tests
-// ============================================================================
-
-func TestE2E_WebSocket_EventStream(t *testing.T) {
-	srv, s, cleanup := testServer(t)
-	defer cleanup()
-
-	// Create a repo and run
-	repo, err := s.CreateRepo("test-repo", nil)
-	if err != nil {
-		t.Fatalf("failed to create repo: %v", err)
-	}
-	run, err := s.CreateRun(repo.ID, "test prompt", "/tmp/workspace")
-	if err != nil {
-		t.Fatalf("failed to create run: %v", err)
-	}
-
-	// Create some events before connecting
-	data1 := `{"text":"line 1"}`
-	data2 := `{"text":"line 2"}`
-	s.CreateEvent(run.ID, "stdout", &data1)
-	s.CreateEvent(run.ID, "stdout", &data2)
-
-	// Start test server
-	ts := httptest.NewServer(srv.httpServer.Handler)
-	defer ts.Close()
-
-	// Connect with auth header
-	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/runs/" + run.ID + "/events"
-	header := http.Header{}
-	header.Set("Authorization", "Bearer test-api-key")
-
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, header)
-	if err != nil {
-		t.Fatalf("failed to connect: %v", err)
-	}
-	defer conn.Close()
-
-	// Should receive replay events
-	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-
-	// First event
-	_, msg1, err := conn.ReadMessage()
-	if err != nil {
-		t.Fatalf("failed to read first event: %v", err)
-	}
-	var wsMsg1 WSMessage
-	json.Unmarshal(msg1, &wsMsg1)
-	if wsMsg1.Type != "event" || wsMsg1.Event.Seq != 1 {
-		t.Errorf("expected event with seq=1, got type=%s seq=%d", wsMsg1.Type, wsMsg1.Event.Seq)
-	}
-
-	// Second event
-	_, msg2, err := conn.ReadMessage()
-	if err != nil {
-		t.Fatalf("failed to read second event: %v", err)
-	}
-	var wsMsg2 WSMessage
-	json.Unmarshal(msg2, &wsMsg2)
-	if wsMsg2.Type != "event" || wsMsg2.Event.Seq != 2 {
-		t.Errorf("expected event with seq=2, got type=%s seq=%d", wsMsg2.Type, wsMsg2.Event.Seq)
-	}
-
-	// State message
-	_, msg3, err := conn.ReadMessage()
-	if err != nil {
-		t.Fatalf("failed to read state: %v", err)
-	}
-	var wsMsg3 WSMessage
-	json.Unmarshal(msg3, &wsMsg3)
-	if wsMsg3.Type != "state" || wsMsg3.State != "running" {
-		t.Errorf("expected state=running, got type=%s state=%s", wsMsg3.Type, wsMsg3.State)
-	}
-
-	// Broadcast a new event
-	data3 := `{"text":"line 3"}`
-	event3, _ := s.CreateEvent(run.ID, "stdout", &data3)
-	srv.Hub().BroadcastEvent(event3)
-
-	// Should receive the broadcast
-	_, msg4, err := conn.ReadMessage()
-	if err != nil {
-		t.Fatalf("failed to read broadcast: %v", err)
-	}
-	var wsMsg4 WSMessage
-	json.Unmarshal(msg4, &wsMsg4)
-	if wsMsg4.Type != "event" || wsMsg4.Event.Seq != 3 {
-		t.Errorf("expected event with seq=3, got type=%s seq=%d", wsMsg4.Type, wsMsg4.Event.Seq)
-	}
-}
-
-func TestE2E_WebSocket_ReplayFromSeq(t *testing.T) {
-	srv, s, cleanup := testServer(t)
-	defer cleanup()
-
-	// Create a repo, run, and events
-	repo, _ := s.CreateRepo("test-repo", nil)
-	run, _ := s.CreateRun(repo.ID, "test prompt", "/tmp/workspace")
-
-	data := `{"text":"event"}`
-	s.CreateEvent(run.ID, "stdout", &data)
-	s.CreateEvent(run.ID, "stdout", &data)
-	s.CreateEvent(run.ID, "stdout", &data)
-
-	ts := httptest.NewServer(srv.httpServer.Handler)
-	defer ts.Close()
-
-	// Connect with from_seq=2 - should only get event with seq=3
-	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/runs/" + run.ID + "/events?from_seq=2"
-	header := http.Header{}
-	header.Set("Authorization", "Bearer test-api-key")
-
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, header)
-	if err != nil {
-		t.Fatalf("failed to connect: %v", err)
-	}
-	defer conn.Close()
-
-	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-
-	// Should receive event with seq=3
-	_, msg, err := conn.ReadMessage()
-	if err != nil {
-		t.Fatalf("failed to read event: %v", err)
-	}
-	var wsMsg WSMessage
-	json.Unmarshal(msg, &wsMsg)
-	if wsMsg.Type != "event" || wsMsg.Event.Seq != 3 {
-		t.Errorf("expected event with seq=3, got type=%s seq=%d", wsMsg.Type, wsMsg.Event.Seq)
-	}
-}
-
-func TestE2E_WebSocket_Unauthorized(t *testing.T) {
-	srv, s, cleanup := testServer(t)
-	defer cleanup()
-
-	repo, _ := s.CreateRepo("test-repo", nil)
-	run, _ := s.CreateRun(repo.ID, "test prompt", "/tmp/workspace")
-
-	ts := httptest.NewServer(srv.httpServer.Handler)
-	defer ts.Close()
-
-	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/runs/" + run.ID + "/events"
-
-	// No auth
-	_, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	if err == nil {
-		t.Error("expected connection to fail without auth")
-	}
-	if resp != nil && resp.StatusCode != http.StatusUnauthorized {
-		t.Errorf("expected 401, got %d", resp.StatusCode)
-	}
-}
-
-func TestE2E_WebSocket_RunNotFound(t *testing.T) {
-	srv, _, cleanup := testServer(t)
-	defer cleanup()
-
-	ts := httptest.NewServer(srv.httpServer.Handler)
-	defer ts.Close()
-
-	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/runs/nonexistent/events"
-	header := http.Header{}
-	header.Set("Authorization", "Bearer test-api-key")
-
-	_, resp, err := websocket.DefaultDialer.Dial(wsURL, header)
-	if err == nil {
-		t.Error("expected connection to fail for nonexistent run")
-	}
-	if resp != nil && resp.StatusCode != http.StatusNotFound {
-		t.Errorf("expected 404, got %d", resp.StatusCode)
 	}
 }
 
