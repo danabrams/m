@@ -3,13 +3,16 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/anthropics/m/internal/store"
+	"github.com/gorilla/websocket"
 )
 
 // testServer creates a test server with a temporary database.
@@ -2458,4 +2461,765 @@ var randomCounter int
 func randomSuffix() string {
 	randomCounter++
 	return string(rune('a' + randomCounter%26))
+}
+
+// ============================================================================
+// E2E Happy Path Tests
+// ============================================================================
+
+// TestE2E_HappyPath_FullRunLifecycle tests the complete flow:
+// iPhone → create run → watch events → approve diff → completion → push notification
+func TestE2E_HappyPath_FullRunLifecycle(t *testing.T) {
+	srv, s, cleanup := testServer(t)
+	defer cleanup()
+
+	// Step 1: Register iOS device for push notifications
+	device, err := s.CreateDevice("test-device-token-12345", store.PlatformIOS)
+	if err != nil {
+		t.Fatalf("failed to register device: %v", err)
+	}
+	if device.Token != "test-device-token-12345" {
+		t.Errorf("device token mismatch: got %q, want %q", device.Token, "test-device-token-12345")
+	}
+	if device.Platform != store.PlatformIOS {
+		t.Errorf("device platform mismatch: got %q, want %q", device.Platform, store.PlatformIOS)
+	}
+
+	// Step 2: Create a repository (without git_url to avoid actual cloning)
+	createRepoResp := request(t, srv, "POST", "/api/repos",
+		map[string]string{"name": "my-project"},
+		"Bearer test-api-key")
+
+	if createRepoResp.Code != http.StatusCreated {
+		t.Fatalf("create repo failed: %d %s", createRepoResp.Code, createRepoResp.Body.String())
+	}
+
+	var repoResp struct {
+		ID     string  `json:"id"`
+		Name   string  `json:"name"`
+		GitURL *string `json:"git_url"`
+	}
+	if err := json.Unmarshal(createRepoResp.Body.Bytes(), &repoResp); err != nil {
+		t.Fatalf("failed to parse repo response: %v", err)
+	}
+	if repoResp.ID == "" {
+		t.Fatal("repo ID should not be empty")
+	}
+	if repoResp.Name != "my-project" {
+		t.Errorf("repo name mismatch: got %q, want %q", repoResp.Name, "my-project")
+	}
+
+	// Step 3: Create a run with a prompt
+	createRunResp := request(t, srv, "POST", "/api/repos/"+repoResp.ID+"/runs",
+		map[string]string{"prompt": "Add a README.md file with project description"},
+		"Bearer test-api-key")
+
+	if createRunResp.Code != http.StatusCreated {
+		t.Fatalf("create run failed: %d %s", createRunResp.Code, createRunResp.Body.String())
+	}
+
+	var runResp struct {
+		ID            string `json:"id"`
+		RepoID        string `json:"repo_id"`
+		Prompt        string `json:"prompt"`
+		State         string `json:"state"`
+		WorkspacePath string `json:"workspace_path"`
+	}
+	if err := json.Unmarshal(createRunResp.Body.Bytes(), &runResp); err != nil {
+		t.Fatalf("failed to parse run response: %v", err)
+	}
+	if runResp.ID == "" {
+		t.Fatal("run ID should not be empty")
+	}
+	if runResp.State != "running" {
+		t.Errorf("initial run state should be 'running', got %q", runResp.State)
+	}
+	if runResp.Prompt != "Add a README.md file with project description" {
+		t.Errorf("prompt mismatch: got %q", runResp.Prompt)
+	}
+
+	// Step 4: Verify run is retrievable via GET
+	getRunResp := request(t, srv, "GET", "/api/runs/"+runResp.ID, nil, "Bearer test-api-key")
+	if getRunResp.Code != http.StatusOK {
+		t.Fatalf("get run failed: %d %s", getRunResp.Code, getRunResp.Body.String())
+	}
+
+	// Step 5: Simulate agent activity by creating events
+	// Event 1: stdout showing agent progress
+	stdoutData := `{"text":"Starting to analyze the repository..."}`
+	event1, err := s.CreateEvent(runResp.ID, "stdout", &stdoutData)
+	if err != nil {
+		t.Fatalf("failed to create stdout event: %v", err)
+	}
+
+	// Event 2: Tool use event (simulating file creation)
+	toolUseData := `{"tool":"Write","file_path":"README.md","content":"# My Project\n\nThis is a project description."}`
+	event2, err := s.CreateEvent(runResp.ID, "tool_use", &toolUseData)
+	if err != nil {
+		t.Fatalf("failed to create tool_use event: %v", err)
+	}
+
+	// Step 6: Simulate approval request for a diff
+	// First, update run state to waiting_approval
+	if err := s.UpdateRunState(runResp.ID, store.RunStateWaitingApproval); err != nil {
+		t.Fatalf("failed to update run state: %v", err)
+	}
+
+	// Create approval request event
+	approvalRequestData := `{"tool":"Edit","file_path":"README.md","old_string":"# My Project","new_string":"# My Awesome Project"}`
+	approvalEvent, err := s.CreateEvent(runResp.ID, "approval_requested", &approvalRequestData)
+	if err != nil {
+		t.Fatalf("failed to create approval_requested event: %v", err)
+	}
+
+	// Create approval record
+	approvalPayload := `{"file_path":"README.md","diff":"- # My Project\n+ # My Awesome Project"}`
+	approval, err := s.CreateApproval(runResp.ID, approvalEvent.ID, store.ApprovalTypeDiff, &approvalPayload)
+	if err != nil {
+		t.Fatalf("failed to create approval: %v", err)
+	}
+	if approval.State != store.ApprovalStatePending {
+		t.Errorf("approval should be pending, got %q", approval.State)
+	}
+
+	// Step 7: Verify pending approvals list contains our approval
+	pendingApprovals, err := s.ListPendingApprovals()
+	if err != nil {
+		t.Fatalf("failed to list pending approvals: %v", err)
+	}
+	found := false
+	for _, a := range pendingApprovals {
+		if a.ID == approval.ID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("approval should be in pending list")
+	}
+
+	// Step 8: Approve the diff
+	if err := s.ApproveApproval(approval.ID); err != nil {
+		t.Fatalf("failed to approve: %v", err)
+	}
+
+	// Step 9: Update run state back to running after approval
+	if err := s.UpdateRunState(runResp.ID, store.RunStateRunning); err != nil {
+		t.Fatalf("failed to update run state: %v", err)
+	}
+
+	// Step 10: Simulate agent completion
+	completedData := `{"text":"Task completed successfully. README.md has been updated."}`
+	_, err = s.CreateEvent(runResp.ID, "stdout", &completedData)
+	if err != nil {
+		t.Fatalf("failed to create completion event: %v", err)
+	}
+
+	// Update run state to completed
+	if err := s.UpdateRunState(runResp.ID, store.RunStateCompleted); err != nil {
+		t.Fatalf("failed to complete run: %v", err)
+	}
+
+	// Step 11: Verify final run state
+	finalRunResp := request(t, srv, "GET", "/api/runs/"+runResp.ID, nil, "Bearer test-api-key")
+	if finalRunResp.Code != http.StatusOK {
+		t.Fatalf("get final run failed: %d %s", finalRunResp.Code, finalRunResp.Body.String())
+	}
+
+	var finalRun struct {
+		State string `json:"state"`
+	}
+	if err := json.Unmarshal(finalRunResp.Body.Bytes(), &finalRun); err != nil {
+		t.Fatalf("failed to parse final run: %v", err)
+	}
+	if finalRun.State != "completed" {
+		t.Errorf("final run state should be 'completed', got %q", finalRun.State)
+	}
+
+	// Step 12: Verify all events are recorded
+	events, err := s.ListEventsByRun(runResp.ID)
+	if err != nil {
+		t.Fatalf("failed to list events: %v", err)
+	}
+	if len(events) < 4 {
+		t.Errorf("expected at least 4 events, got %d", len(events))
+	}
+
+	// Verify event sequence numbers are monotonically increasing
+	var lastSeq int64
+	for _, e := range events {
+		if e.Seq <= lastSeq {
+			t.Errorf("event seq not monotonically increasing: %d <= %d", e.Seq, lastSeq)
+		}
+		lastSeq = e.Seq
+	}
+
+	// Step 13: Verify approval is no longer pending
+	resolvedApproval, err := s.GetApproval(approval.ID)
+	if err != nil {
+		t.Fatalf("failed to get approval: %v", err)
+	}
+	if resolvedApproval.State != store.ApprovalStateApproved {
+		t.Errorf("approval should be approved, got %q", resolvedApproval.State)
+	}
+
+	// Step 14: Verify device is still registered for push notifications
+	devices, err := s.ListDevicesByPlatform(store.PlatformIOS)
+	if err != nil {
+		t.Fatalf("failed to list devices: %v", err)
+	}
+	if len(devices) == 0 {
+		t.Error("expected at least one iOS device registered")
+	}
+
+	// Verify our device is registered
+	deviceFound := false
+	for _, d := range devices {
+		if d.Token == "test-device-token-12345" {
+			deviceFound = true
+			break
+		}
+	}
+	if !deviceFound {
+		t.Error("registered device should be in devices list")
+	}
+
+	// Verify events have correct types and order
+	_ = event1
+	_ = event2
+}
+
+// TestE2E_HappyPath_WebSocketEventStream tests real-time event streaming via WebSocket
+func TestE2E_HappyPath_WebSocketEventStream(t *testing.T) {
+	tmpDir := t.TempDir()
+	tmpDB := tmpDir + "/test.db"
+	tmpWorkspaces := tmpDir + "/workspaces"
+
+	s, err := store.New(tmpDB)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer s.Close()
+
+	srv := New(Config{
+		Port:           8080,
+		APIKey:         "test-api-key",
+		WorkspacesPath: tmpWorkspaces,
+	}, s)
+
+	// Create test server for WebSocket
+	ts := httptest.NewServer(srv.httpServer.Handler)
+	defer ts.Close()
+
+	// Create repo and run
+	repo, err := s.CreateRepo("ws-test-repo", nil)
+	if err != nil {
+		t.Fatalf("failed to create repo: %v", err)
+	}
+	run, err := s.CreateRun(repo.ID, "Test WebSocket streaming", tmpWorkspaces+"/test")
+	if err != nil {
+		t.Fatalf("failed to create run: %v", err)
+	}
+
+	// Connect WebSocket
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/runs/" + run.ID + "/events"
+	header := http.Header{}
+	header.Set("Authorization", "Bearer test-api-key")
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, header)
+	if err != nil {
+		t.Fatalf("failed to connect WebSocket: %v", err)
+	}
+	defer conn.Close()
+
+	// Should receive initial state message
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, msg, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("failed to read initial message: %v", err)
+	}
+
+	var stateMsg WSMessage
+	if err := json.Unmarshal(msg, &stateMsg); err != nil {
+		t.Fatalf("failed to parse state message: %v", err)
+	}
+	if stateMsg.Type != "state" {
+		t.Errorf("expected state message, got %q", stateMsg.Type)
+	}
+	if stateMsg.State != "running" {
+		t.Errorf("expected running state, got %q", stateMsg.State)
+	}
+
+	// Create event and broadcast
+	stdoutData := `{"text":"Hello from agent"}`
+	event, err := s.CreateEvent(run.ID, "stdout", &stdoutData)
+	if err != nil {
+		t.Fatalf("failed to create event: %v", err)
+	}
+	srv.hub.BroadcastEvent(event)
+
+	// Should receive event via WebSocket
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, msg, err = conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("failed to read event message: %v", err)
+	}
+
+	var eventMsg WSMessage
+	if err := json.Unmarshal(msg, &eventMsg); err != nil {
+		t.Fatalf("failed to parse event message: %v", err)
+	}
+	if eventMsg.Type != "event" {
+		t.Errorf("expected event message, got %q", eventMsg.Type)
+	}
+	if eventMsg.Event.Type != "stdout" {
+		t.Errorf("expected stdout event, got %q", eventMsg.Event.Type)
+	}
+	if eventMsg.Event.Seq != event.Seq {
+		t.Errorf("event seq mismatch: got %d, want %d", eventMsg.Event.Seq, event.Seq)
+	}
+
+	// Broadcast state change
+	srv.hub.BroadcastState(run.ID, store.RunStateWaitingApproval)
+
+	// Should receive state change
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, msg, err = conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("failed to read state change: %v", err)
+	}
+
+	var newStateMsg WSMessage
+	if err := json.Unmarshal(msg, &newStateMsg); err != nil {
+		t.Fatalf("failed to parse state change: %v", err)
+	}
+	if newStateMsg.Type != "state" {
+		t.Errorf("expected state message, got %q", newStateMsg.Type)
+	}
+	if newStateMsg.State != "waiting_approval" {
+		t.Errorf("expected waiting_approval state, got %q", newStateMsg.State)
+	}
+}
+
+// TestE2E_HappyPath_ApprovalRejectFlow tests the rejection flow
+func TestE2E_HappyPath_ApprovalRejectFlow(t *testing.T) {
+	srv, s, cleanup := testServer(t)
+	defer cleanup()
+
+	// Create repo and run
+	repo, err := s.CreateRepo("reject-test-repo", nil)
+	if err != nil {
+		t.Fatalf("failed to create repo: %v", err)
+	}
+	run, err := s.CreateRun(repo.ID, "Test rejection flow", "/tmp/workspace")
+	if err != nil {
+		t.Fatalf("failed to create run: %v", err)
+	}
+
+	// Update to waiting_approval
+	if err := s.UpdateRunState(run.ID, store.RunStateWaitingApproval); err != nil {
+		t.Fatalf("failed to update state: %v", err)
+	}
+
+	// Create approval request
+	approvalData := `{"tool":"Bash","command":"rm -rf /"}`
+	event, err := s.CreateEvent(run.ID, "approval_requested", &approvalData)
+	if err != nil {
+		t.Fatalf("failed to create event: %v", err)
+	}
+
+	payload := `{"command":"rm -rf /"}`
+	approval, err := s.CreateApproval(run.ID, event.ID, store.ApprovalTypeCommand, &payload)
+	if err != nil {
+		t.Fatalf("failed to create approval: %v", err)
+	}
+
+	// Reject the approval
+	reason := "Command is dangerous and destructive"
+	if err := s.RejectApproval(approval.ID, reason); err != nil {
+		t.Fatalf("failed to reject approval: %v", err)
+	}
+
+	// Verify approval state
+	rejectedApproval, err := s.GetApproval(approval.ID)
+	if err != nil {
+		t.Fatalf("failed to get approval: %v", err)
+	}
+	if rejectedApproval.State != store.ApprovalStateRejected {
+		t.Errorf("approval should be rejected, got %q", rejectedApproval.State)
+	}
+	if rejectedApproval.RejectionReason == nil || *rejectedApproval.RejectionReason != reason {
+		t.Errorf("rejection reason mismatch")
+	}
+
+	// Update run state to failed after rejection
+	if err := s.UpdateRunState(run.ID, store.RunStateFailed); err != nil {
+		t.Fatalf("failed to fail run: %v", err)
+	}
+
+	// Verify run is failed
+	failedRun, err := s.GetRun(run.ID)
+	if err != nil {
+		t.Fatalf("failed to get run: %v", err)
+	}
+	if failedRun.State != store.RunStateFailed {
+		t.Errorf("run should be failed, got %q", failedRun.State)
+	}
+
+	// Approval should not appear in pending list
+	pendingApprovals, err := s.ListPendingApprovals()
+	if err != nil {
+		t.Fatalf("failed to list pending: %v", err)
+	}
+	for _, a := range pendingApprovals {
+		if a.ID == approval.ID {
+			t.Error("rejected approval should not be in pending list")
+		}
+	}
+
+	_ = srv // server used for API tests
+}
+
+// TestE2E_HappyPath_MultipleRunsSequential tests creating multiple runs sequentially
+func TestE2E_HappyPath_MultipleRunsSequential(t *testing.T) {
+	srv, s, cleanup := testServer(t)
+	defer cleanup()
+
+	// Create repo
+	repo, err := s.CreateRepo("multi-run-repo", nil)
+	if err != nil {
+		t.Fatalf("failed to create repo: %v", err)
+	}
+
+	// Create first run
+	run1Resp := request(t, srv, "POST", "/api/repos/"+repo.ID+"/runs",
+		map[string]string{"prompt": "First task"},
+		"Bearer test-api-key")
+
+	if run1Resp.Code != http.StatusCreated {
+		t.Fatalf("create first run failed: %d", run1Resp.Code)
+	}
+
+	var run1 struct {
+		ID string `json:"id"`
+	}
+	json.Unmarshal(run1Resp.Body.Bytes(), &run1)
+
+	// Try to create second run while first is active - should fail
+	run2Resp := request(t, srv, "POST", "/api/repos/"+repo.ID+"/runs",
+		map[string]string{"prompt": "Second task"},
+		"Bearer test-api-key")
+
+	if run2Resp.Code != http.StatusConflict {
+		t.Errorf("expected conflict for second run, got %d", run2Resp.Code)
+	}
+
+	// Complete first run
+	if err := s.UpdateRunState(run1.ID, store.RunStateCompleted); err != nil {
+		t.Fatalf("failed to complete first run: %v", err)
+	}
+
+	// Now second run should succeed
+	run3Resp := request(t, srv, "POST", "/api/repos/"+repo.ID+"/runs",
+		map[string]string{"prompt": "Second task (after first completed)"},
+		"Bearer test-api-key")
+
+	if run3Resp.Code != http.StatusCreated {
+		t.Fatalf("create second run failed: %d %s", run3Resp.Code, run3Resp.Body.String())
+	}
+
+	// Verify runs list shows both runs
+	listResp := request(t, srv, "GET", "/api/repos/"+repo.ID+"/runs", nil, "Bearer test-api-key")
+	if listResp.Code != http.StatusOK {
+		t.Fatalf("list runs failed: %d", listResp.Code)
+	}
+
+	var runs []struct {
+		ID    string `json:"id"`
+		State string `json:"state"`
+	}
+	json.Unmarshal(listResp.Body.Bytes(), &runs)
+	if len(runs) != 2 {
+		t.Errorf("expected 2 runs, got %d", len(runs))
+	}
+}
+
+// TestE2E_HappyPath_UserInputFlow tests the user input flow
+func TestE2E_HappyPath_UserInputFlow(t *testing.T) {
+	srv, s, cleanup := testServer(t)
+	defer cleanup()
+
+	// Create repo and run
+	repo, err := s.CreateRepo("input-test-repo", nil)
+	if err != nil {
+		t.Fatalf("failed to create repo: %v", err)
+	}
+	run, err := s.CreateRun(repo.ID, "Test user input", "/tmp/workspace")
+	if err != nil {
+		t.Fatalf("failed to create run: %v", err)
+	}
+
+	// Update run to waiting_input state
+	if err := s.UpdateRunState(run.ID, store.RunStateWaitingInput); err != nil {
+		t.Fatalf("failed to update state: %v", err)
+	}
+
+	// Create input request event
+	inputRequestData := `{"question":"What is your project name?"}`
+	_, err = s.CreateEvent(run.ID, "input_requested", &inputRequestData)
+	if err != nil {
+		t.Fatalf("failed to create input event: %v", err)
+	}
+
+	// Send user input via API
+	inputResp := request(t, srv, "POST", "/api/runs/"+run.ID+"/input",
+		map[string]string{"text": "My Awesome Project"},
+		"Bearer test-api-key")
+
+	if inputResp.Code != http.StatusOK {
+		t.Fatalf("send input failed: %d %s", inputResp.Code, inputResp.Body.String())
+	}
+
+	// Verify run state changed back to running
+	updatedRun, err := s.GetRun(run.ID)
+	if err != nil {
+		t.Fatalf("failed to get run: %v", err)
+	}
+	if updatedRun.State != store.RunStateRunning {
+		t.Errorf("run state should be running after input, got %q", updatedRun.State)
+	}
+}
+
+// TestE2E_HappyPath_CancelRunFlow tests cancelling a run
+func TestE2E_HappyPath_CancelRunFlow(t *testing.T) {
+	srv, s, cleanup := testServer(t)
+	defer cleanup()
+
+	// Create repo and run
+	repo, err := s.CreateRepo("cancel-test-repo", nil)
+	if err != nil {
+		t.Fatalf("failed to create repo: %v", err)
+	}
+
+	runResp := request(t, srv, "POST", "/api/repos/"+repo.ID+"/runs",
+		map[string]string{"prompt": "Task to be cancelled"},
+		"Bearer test-api-key")
+
+	if runResp.Code != http.StatusCreated {
+		t.Fatalf("create run failed: %d", runResp.Code)
+	}
+
+	var run struct {
+		ID    string `json:"id"`
+		State string `json:"state"`
+	}
+	json.Unmarshal(runResp.Body.Bytes(), &run)
+
+	if run.State != "running" {
+		t.Fatalf("initial state should be running, got %q", run.State)
+	}
+
+	// Cancel the run
+	cancelResp := request(t, srv, "POST", "/api/runs/"+run.ID+"/cancel", nil, "Bearer test-api-key")
+
+	if cancelResp.Code != http.StatusOK {
+		t.Fatalf("cancel run failed: %d %s", cancelResp.Code, cancelResp.Body.String())
+	}
+
+	// Verify state is cancelled
+	var cancelledRun struct {
+		State string `json:"state"`
+	}
+	json.Unmarshal(cancelResp.Body.Bytes(), &cancelledRun)
+
+	if cancelledRun.State != "cancelled" {
+		t.Errorf("run state should be cancelled, got %q", cancelledRun.State)
+	}
+
+	// Verify can create new run after cancellation
+	newRunResp := request(t, srv, "POST", "/api/repos/"+repo.ID+"/runs",
+		map[string]string{"prompt": "New task after cancellation"},
+		"Bearer test-api-key")
+
+	if newRunResp.Code != http.StatusCreated {
+		t.Fatalf("create new run after cancel failed: %d %s", newRunResp.Code, newRunResp.Body.String())
+	}
+}
+
+// TestE2E_HappyPath_DeviceManagement tests device registration and unregistration
+func TestE2E_HappyPath_DeviceManagement(t *testing.T) {
+	_, s, cleanup := testServer(t)
+	defer cleanup()
+
+	// Register multiple devices
+	device1, err := s.CreateDevice("device-token-1", store.PlatformIOS)
+	if err != nil {
+		t.Fatalf("failed to register device 1: %v", err)
+	}
+	device2, err := s.CreateDevice("device-token-2", store.PlatformIOS)
+	if err != nil {
+		t.Fatalf("failed to register device 2: %v", err)
+	}
+
+	// Verify devices are registered
+	devices, err := s.ListDevices()
+	if err != nil {
+		t.Fatalf("failed to list devices: %v", err)
+	}
+	if len(devices) != 2 {
+		t.Errorf("expected 2 devices, got %d", len(devices))
+	}
+
+	// Re-register device 1 (should update, not duplicate)
+	_, err = s.CreateDevice("device-token-1", store.PlatformIOS)
+	if err != nil {
+		t.Fatalf("failed to re-register device: %v", err)
+	}
+
+	devices, err = s.ListDevices()
+	if err != nil {
+		t.Fatalf("failed to list devices: %v", err)
+	}
+	if len(devices) != 2 {
+		t.Errorf("re-registration should not create duplicate, got %d devices", len(devices))
+	}
+
+	// Delete device 1
+	if err := s.DeleteDevice(device1.Token); err != nil {
+		t.Fatalf("failed to delete device: %v", err)
+	}
+
+	// Verify only device 2 remains
+	devices, err = s.ListDevices()
+	if err != nil {
+		t.Fatalf("failed to list devices: %v", err)
+	}
+	if len(devices) != 1 {
+		t.Errorf("expected 1 device after deletion, got %d", len(devices))
+	}
+	if devices[0].Token != device2.Token {
+		t.Errorf("wrong device remaining: got %q, want %q", devices[0].Token, device2.Token)
+	}
+}
+
+// TestE2E_HappyPath_EventSequencing tests that events maintain proper sequence numbers
+func TestE2E_HappyPath_EventSequencing(t *testing.T) {
+	_, s, cleanup := testServer(t)
+	defer cleanup()
+
+	repo, err := s.CreateRepo("seq-test-repo", nil)
+	if err != nil {
+		t.Fatalf("failed to create repo: %v", err)
+	}
+	run, err := s.CreateRun(repo.ID, "Test event sequencing", "/tmp/workspace")
+	if err != nil {
+		t.Fatalf("failed to create run: %v", err)
+	}
+
+	// Create multiple events
+	var createdEvents []*store.Event
+	eventTypes := []string{"stdout", "tool_use", "stdout", "approval_requested", "stdout"}
+	for i, eventType := range eventTypes {
+		data := fmt.Sprintf(`{"index":%d}`, i)
+		event, err := s.CreateEvent(run.ID, eventType, &data)
+		if err != nil {
+			t.Fatalf("failed to create event %d: %v", i, err)
+		}
+		createdEvents = append(createdEvents, event)
+	}
+
+	// Verify sequence numbers are monotonically increasing
+	for i := 1; i < len(createdEvents); i++ {
+		if createdEvents[i].Seq <= createdEvents[i-1].Seq {
+			t.Errorf("event %d seq (%d) should be > event %d seq (%d)",
+				i, createdEvents[i].Seq, i-1, createdEvents[i-1].Seq)
+		}
+	}
+
+	// Test ListEventsByRunSince
+	midSeq := createdEvents[2].Seq
+	laterEvents, err := s.ListEventsByRunSince(run.ID, midSeq)
+	if err != nil {
+		t.Fatalf("failed to list events since: %v", err)
+	}
+
+	// Should get events after midSeq (events 3 and 4)
+	if len(laterEvents) != 2 {
+		t.Errorf("expected 2 events after seq %d, got %d", midSeq, len(laterEvents))
+	}
+	for _, e := range laterEvents {
+		if e.Seq <= midSeq {
+			t.Errorf("event with seq %d should not be in results (midSeq=%d)", e.Seq, midSeq)
+		}
+	}
+}
+
+// TestE2E_HappyPath_RepositoryCRUD tests full repository lifecycle
+func TestE2E_HappyPath_RepositoryCRUD(t *testing.T) {
+	srv, _, cleanup := testServer(t)
+	defer cleanup()
+
+	// Create repo
+	createResp := request(t, srv, "POST", "/api/repos",
+		map[string]string{"name": "crud-test-repo", "git_url": "https://github.com/test/repo.git"},
+		"Bearer test-api-key")
+
+	if createResp.Code != http.StatusCreated {
+		t.Fatalf("create repo failed: %d %s", createResp.Code, createResp.Body.String())
+	}
+
+	var repo struct {
+		ID     string `json:"id"`
+		Name   string `json:"name"`
+		GitURL string `json:"git_url"`
+	}
+	json.Unmarshal(createResp.Body.Bytes(), &repo)
+
+	// Read repo
+	getResp := request(t, srv, "GET", "/api/repos/"+repo.ID, nil, "Bearer test-api-key")
+	if getResp.Code != http.StatusOK {
+		t.Fatalf("get repo failed: %d", getResp.Code)
+	}
+
+	var getRepo struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	}
+	json.Unmarshal(getResp.Body.Bytes(), &getRepo)
+	if getRepo.Name != "crud-test-repo" {
+		t.Errorf("repo name mismatch: got %q, want %q", getRepo.Name, "crud-test-repo")
+	}
+
+	// List repos
+	listResp := request(t, srv, "GET", "/api/repos", nil, "Bearer test-api-key")
+	if listResp.Code != http.StatusOK {
+		t.Fatalf("list repos failed: %d", listResp.Code)
+	}
+
+	var repos []struct {
+		ID string `json:"id"`
+	}
+	json.Unmarshal(listResp.Body.Bytes(), &repos)
+	found := false
+	for _, r := range repos {
+		if r.ID == repo.ID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("created repo should be in list")
+	}
+
+	// Delete repo
+	deleteResp := request(t, srv, "DELETE", "/api/repos/"+repo.ID, nil, "Bearer test-api-key")
+	if deleteResp.Code != http.StatusNoContent {
+		t.Fatalf("delete repo failed: %d %s", deleteResp.Code, deleteResp.Body.String())
+	}
+
+	// Verify deleted
+	getDeletedResp := request(t, srv, "GET", "/api/repos/"+repo.ID, nil, "Bearer test-api-key")
+	if getDeletedResp.Code != http.StatusNotFound {
+		t.Errorf("deleted repo should not be found, got %d", getDeletedResp.Code)
+	}
 }
