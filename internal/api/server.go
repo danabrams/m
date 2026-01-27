@@ -18,6 +18,7 @@ type Server struct {
 	httpServer *http.Server
 	store      *store.Store
 	apiKey     string
+	hub        *Hub
 }
 
 // Config holds server configuration.
@@ -28,9 +29,13 @@ type Config struct {
 
 // New creates a new Server.
 func New(cfg Config, s *store.Store) *Server {
+	hub := NewHub()
+	go hub.Run()
+
 	srv := &Server{
 		store:  s,
 		apiKey: cfg.APIKey,
+		hub:    hub,
 	}
 
 	mux := http.NewServeMux()
@@ -82,6 +87,14 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 
 	// Internal (hook)
 	mux.HandleFunc("POST /api/internal/interaction-request", s.handleInteractionRequest)
+
+	// WebSocket
+	mux.HandleFunc("GET /api/runs/{id}/events", s.handleEventsWS)
+}
+
+// Hub returns the WebSocket hub for broadcasting events.
+func (s *Server) Hub() *Hub {
+	return s.hub
 }
 
 // Run starts the server and blocks until shutdown.

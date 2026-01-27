@@ -6,9 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/anthropics/m/internal/store"
+	"github.com/gorilla/websocket"
 )
 
 // testServer creates a test server with a temporary database.
@@ -1267,6 +1270,181 @@ func TestE2E_SuccessResponseContentType(t *testing.T) {
 	contentType := w.Header().Get("Content-Type")
 	if contentType != "application/json" {
 		t.Errorf("got Content-Type %q, want %q", contentType, "application/json")
+	}
+}
+
+// ============================================================================
+// WebSocket Tests
+// ============================================================================
+
+func TestE2E_WebSocket_EventStream(t *testing.T) {
+	srv, s, cleanup := testServer(t)
+	defer cleanup()
+
+	// Create a repo and run
+	repo, err := s.CreateRepo("test-repo", nil)
+	if err != nil {
+		t.Fatalf("failed to create repo: %v", err)
+	}
+	run, err := s.CreateRun(repo.ID, "test prompt", "/tmp/workspace")
+	if err != nil {
+		t.Fatalf("failed to create run: %v", err)
+	}
+
+	// Create some events before connecting
+	data1 := `{"text":"line 1"}`
+	data2 := `{"text":"line 2"}`
+	s.CreateEvent(run.ID, "stdout", &data1)
+	s.CreateEvent(run.ID, "stdout", &data2)
+
+	// Start test server
+	ts := httptest.NewServer(srv.httpServer.Handler)
+	defer ts.Close()
+
+	// Connect with auth header
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/runs/" + run.ID + "/events"
+	header := http.Header{}
+	header.Set("Authorization", "Bearer test-api-key")
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, header)
+	if err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+	defer conn.Close()
+
+	// Should receive replay events
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+
+	// First event
+	_, msg1, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("failed to read first event: %v", err)
+	}
+	var wsMsg1 WSMessage
+	json.Unmarshal(msg1, &wsMsg1)
+	if wsMsg1.Type != "event" || wsMsg1.Event.Seq != 1 {
+		t.Errorf("expected event with seq=1, got type=%s seq=%d", wsMsg1.Type, wsMsg1.Event.Seq)
+	}
+
+	// Second event
+	_, msg2, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("failed to read second event: %v", err)
+	}
+	var wsMsg2 WSMessage
+	json.Unmarshal(msg2, &wsMsg2)
+	if wsMsg2.Type != "event" || wsMsg2.Event.Seq != 2 {
+		t.Errorf("expected event with seq=2, got type=%s seq=%d", wsMsg2.Type, wsMsg2.Event.Seq)
+	}
+
+	// State message
+	_, msg3, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("failed to read state: %v", err)
+	}
+	var wsMsg3 WSMessage
+	json.Unmarshal(msg3, &wsMsg3)
+	if wsMsg3.Type != "state" || wsMsg3.State != "running" {
+		t.Errorf("expected state=running, got type=%s state=%s", wsMsg3.Type, wsMsg3.State)
+	}
+
+	// Broadcast a new event
+	data3 := `{"text":"line 3"}`
+	event3, _ := s.CreateEvent(run.ID, "stdout", &data3)
+	srv.Hub().BroadcastEvent(event3)
+
+	// Should receive the broadcast
+	_, msg4, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("failed to read broadcast: %v", err)
+	}
+	var wsMsg4 WSMessage
+	json.Unmarshal(msg4, &wsMsg4)
+	if wsMsg4.Type != "event" || wsMsg4.Event.Seq != 3 {
+		t.Errorf("expected event with seq=3, got type=%s seq=%d", wsMsg4.Type, wsMsg4.Event.Seq)
+	}
+}
+
+func TestE2E_WebSocket_ReplayFromSeq(t *testing.T) {
+	srv, s, cleanup := testServer(t)
+	defer cleanup()
+
+	// Create a repo, run, and events
+	repo, _ := s.CreateRepo("test-repo", nil)
+	run, _ := s.CreateRun(repo.ID, "test prompt", "/tmp/workspace")
+
+	data := `{"text":"event"}`
+	s.CreateEvent(run.ID, "stdout", &data)
+	s.CreateEvent(run.ID, "stdout", &data)
+	s.CreateEvent(run.ID, "stdout", &data)
+
+	ts := httptest.NewServer(srv.httpServer.Handler)
+	defer ts.Close()
+
+	// Connect with from_seq=2 - should only get event with seq=3
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/runs/" + run.ID + "/events?from_seq=2"
+	header := http.Header{}
+	header.Set("Authorization", "Bearer test-api-key")
+
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, header)
+	if err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+	defer conn.Close()
+
+	conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+
+	// Should receive event with seq=3
+	_, msg, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("failed to read event: %v", err)
+	}
+	var wsMsg WSMessage
+	json.Unmarshal(msg, &wsMsg)
+	if wsMsg.Type != "event" || wsMsg.Event.Seq != 3 {
+		t.Errorf("expected event with seq=3, got type=%s seq=%d", wsMsg.Type, wsMsg.Event.Seq)
+	}
+}
+
+func TestE2E_WebSocket_Unauthorized(t *testing.T) {
+	srv, s, cleanup := testServer(t)
+	defer cleanup()
+
+	repo, _ := s.CreateRepo("test-repo", nil)
+	run, _ := s.CreateRun(repo.ID, "test prompt", "/tmp/workspace")
+
+	ts := httptest.NewServer(srv.httpServer.Handler)
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/runs/" + run.ID + "/events"
+
+	// No auth
+	_, resp, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	if err == nil {
+		t.Error("expected connection to fail without auth")
+	}
+	if resp != nil && resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", resp.StatusCode)
+	}
+}
+
+func TestE2E_WebSocket_RunNotFound(t *testing.T) {
+	srv, _, cleanup := testServer(t)
+	defer cleanup()
+
+	ts := httptest.NewServer(srv.httpServer.Handler)
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/runs/nonexistent/events"
+	header := http.Header{}
+	header.Set("Authorization", "Bearer test-api-key")
+
+	_, resp, err := websocket.DefaultDialer.Dial(wsURL, header)
+	if err == nil {
+		t.Error("expected connection to fail for nonexistent run")
+	}
+	if resp != nil && resp.StatusCode != http.StatusNotFound {
+		t.Errorf("expected 404, got %d", resp.StatusCode)
 	}
 }
 
