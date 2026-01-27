@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/anthropics/m/internal/run"
 	"github.com/anthropics/m/internal/store"
 )
 
@@ -19,12 +20,14 @@ type Server struct {
 	store      *store.Store
 	apiKey     string
 	hub        *Hub
+	workspace  *run.WorkspaceManager
 }
 
 // Config holds server configuration.
 type Config struct {
-	Port   int
-	APIKey string
+	Port           int
+	APIKey         string
+	WorkspacesPath string
 }
 
 // New creates a new Server.
@@ -32,10 +35,17 @@ func New(cfg Config, s *store.Store) *Server {
 	hub := NewHub()
 	go hub.Run()
 
+	// Default workspaces path if not configured
+	workspacesPath := cfg.WorkspacesPath
+	if workspacesPath == "" {
+		workspacesPath = "./workspaces"
+	}
+
 	srv := &Server{
-		store:  s,
-		apiKey: cfg.APIKey,
-		hub:    hub,
+		store:     s,
+		apiKey:    cfg.APIKey,
+		hub:       hub,
+		workspace: run.NewWorkspaceManager(workspacesPath),
 	}
 
 	mux := http.NewServeMux()

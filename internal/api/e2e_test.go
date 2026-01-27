@@ -15,13 +15,20 @@ import (
 func testServer(t *testing.T) (*Server, *store.Store, func()) {
 	t.Helper()
 
-	tmpDB := t.TempDir() + "/test.db"
+	tmpDir := t.TempDir()
+	tmpDB := tmpDir + "/test.db"
+	tmpWorkspaces := tmpDir + "/workspaces"
+
 	s, err := store.New(tmpDB)
 	if err != nil {
 		t.Fatalf("failed to create store: %v", err)
 	}
 
-	srv := New(Config{Port: 8080, APIKey: "test-api-key"}, s)
+	srv := New(Config{
+		Port:           8080,
+		APIKey:         "test-api-key",
+		WorkspacesPath: tmpWorkspaces,
+	}, s)
 
 	cleanup := func() {
 		s.Close()
@@ -506,6 +513,58 @@ func TestE2E_Runs_Create(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestE2E_Runs_Create_WorkspaceCreated(t *testing.T) {
+	tmpDir := t.TempDir()
+	tmpDB := tmpDir + "/test.db"
+	tmpWorkspaces := tmpDir + "/workspaces"
+
+	s, err := store.New(tmpDB)
+	if err != nil {
+		t.Fatalf("failed to create store: %v", err)
+	}
+	defer s.Close()
+
+	srv := New(Config{
+		Port:           8080,
+		APIKey:         "test-api-key",
+		WorkspacesPath: tmpWorkspaces,
+	}, s)
+
+	// Create a repo
+	repo, err := s.CreateRepo("test-repo", nil)
+	if err != nil {
+		t.Fatalf("failed to create repo: %v", err)
+	}
+
+	// Create a run via API
+	w := request(t, srv, "POST", "/api/repos/"+repo.ID+"/runs",
+		map[string]string{"prompt": "Test workspace creation"},
+		"Bearer test-api-key")
+
+	if w.Code != http.StatusCreated {
+		t.Fatalf("got status %d, want %d", w.Code, http.StatusCreated)
+	}
+
+	// Parse response to get run ID
+	var resp struct {
+		ID            string `json:"id"`
+		WorkspacePath string `json:"workspace_path"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	// Verify workspace directory was created
+	if _, err := os.Stat(resp.WorkspacePath); os.IsNotExist(err) {
+		t.Errorf("workspace directory was not created at %s", resp.WorkspacePath)
+	}
+
+	// Verify workspace path contains the run ID
+	if !contains(resp.WorkspacePath, resp.ID) {
+		t.Errorf("workspace path %q should contain run ID %q", resp.WorkspacePath, resp.ID)
 	}
 }
 
