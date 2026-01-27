@@ -127,26 +127,6 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(`{"status":"ok"}`))
 }
 
-func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusNotImplemented, "not_implemented", "not implemented")
-}
-
-func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusNotImplemented, "not_implemented", "not implemented")
-}
-
-func (s *Server) handleGetRun(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusNotImplemented, "not_implemented", "not implemented")
-}
-
-func (s *Server) handleCancelRun(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusNotImplemented, "not_implemented", "not implemented")
-}
-
-func (s *Server) handleSendInput(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusNotImplemented, "not_implemented", "not implemented")
-}
-
 func (s *Server) handleListPendingApprovals(w http.ResponseWriter, r *http.Request) {
 	writeError(w, http.StatusNotImplemented, "not_implemented", "not implemented")
 }
