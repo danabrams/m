@@ -5,7 +5,7 @@ Project **M** is a system that lets a human launch, observe, and steer long‑ru
 
 ## Design Invariants (do not reinterpret)
 1. **Event-driven truth**: Everything important is an event. Clients render from the event stream.
-2. **Remote steering**: Client must be able to inject input, pause/resume/cancel, and resolve approvals.
+2. **Remote steering**: Client must be able to inject input, cancel, and resolve approvals. (Pause/resume deferred to v1.)
 3. **Approvals are first-class**: When approval is needed, it must be visible immediately and block progress until resolved.
 4. **Arbitrary shell exists**: The agent can execute arbitrary shell commands, but only inside the system's chosen sandbox boundary.
 5. **Single-host execution (v0)**: M and run execution occur on the same host. Only the client is remote.
