@@ -1,0 +1,30 @@
+# M Server Configuration
+# Environment variables override these values:
+#   M_PORT, M_API_KEY, M_DB_PATH, M_WORKSPACES_PATH
+
+server:
+  port: 8080
+  api_key: "your-api-key-here"
+
+storage:
+  path: "./data/m.db"
+
+workspaces:
+  path: "./workspaces"
+
+agent:
+  type: "claude"
+  approval_tools:
+    - Edit
+    - Write
+    - Bash
+    - NotebookEdit
+  input_tools:
+    - AskUserQuestion
+  hook_timeout: 300
+
+push:
+  enabled: false
+  # apns_key_path: "./apns.p8"
+  # apns_key_id: "ABC123"
+  # apns_team_id: "DEF456"
