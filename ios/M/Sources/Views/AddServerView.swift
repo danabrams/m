@@ -27,13 +27,17 @@ struct AddServerView: View {
 
                     TextField("URL", text: $urlString)
                         .textContentType(.URL)
+                        #if os(iOS)
                         .keyboardType(.URL)
                         .textInputAutocapitalization(.never)
+                        #endif
                         .autocorrectionDisabled()
 
                     SecureField("API Key", text: $apiKey)
                         .textContentType(.password)
+                        #if os(iOS)
                         .textInputAutocapitalization(.never)
+                        #endif
                         .autocorrectionDisabled()
                 }
 
@@ -46,7 +50,9 @@ struct AddServerView: View {
                 }
             }
             .navigationTitle("Add Server")
+            #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") {
