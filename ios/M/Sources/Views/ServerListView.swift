@@ -47,14 +47,57 @@ struct ServerListView: View {
     private var serverList: some View {
         List {
             ForEach(store.servers) { server in
-                ServerRowView(
-                    server: server,
-                    status: connectionStatuses[server.id] ?? .unknown,
-                    lastActivity: nil
-                )
+                NavigationLink(value: server) {
+                    ServerRowView(
+                        server: server,
+                        status: connectionStatuses[server.id] ?? .unknown,
+                        lastActivity: nil
+                    )
+                }
             }
             .onDelete(perform: store.deleteServers)
         }
         .listStyle(.plain)
+        .navigationDestination(for: MServer.self) { server in
+            ServerDestinationView(server: server)
+        }
+    }
+}
+
+/// Wrapper view that creates APIClient for server navigation.
+private struct ServerDestinationView: View {
+    let server: MServer
+    @State private var apiKey: String?
+    @State private var error: Error?
+
+    var body: some View {
+        Group {
+            if let apiKey, !apiKey.isEmpty {
+                let apiClient = APIClient(server: server, apiKey: apiKey)
+                RepoListView(server: server, apiClient: apiClient)
+            } else if let error {
+                ContentUnavailableView {
+                    Label("Unable to Connect", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(error.localizedDescription)
+                }
+            } else {
+                ProgressView()
+            }
+        }
+        .task {
+            loadAPIKey()
+        }
+    }
+
+    private func loadAPIKey() {
+        do {
+            apiKey = try KeychainService.shared.getAPIKey(for: server.id)
+            if apiKey == nil {
+                error = MError.unauthorized
+            }
+        } catch {
+            self.error = error
+        }
     }
 }
