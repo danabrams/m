@@ -6,7 +6,13 @@ import (
 	"net/http"
 
 	"github.com/anthropics/m/internal/store"
+	"github.com/google/uuid"
 )
+
+// generateRunID generates a unique run ID.
+func generateRunID() string {
+	return uuid.New().String()
+}
 
 // runResponse represents a run in API responses.
 type runResponse struct {
@@ -77,8 +83,8 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify repo exists
-	_, err := s.store.GetRepo(repoID)
+	// Verify repo exists and get git URL
+	repo, err := s.store.GetRepo(repoID)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not_found", "repo not found")
 		return
@@ -99,15 +105,27 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate workspace path (future: actual workspace management)
-	workspacePath := "/workspaces/" + repoID
+	// Generate a temporary run ID for workspace creation
+	// The store will generate the actual ID, but we need to create workspace first
+	tempRunID := generateRunID()
 
-	run, err := s.store.CreateRun(repoID, req.Prompt, workspacePath)
+	// Create workspace directory (optionally with git clone)
+	workspacePath, err := s.workspace.Create(tempRunID, repo.GitURL)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "failed to create workspace")
+		return
+	}
+
+	run, err := s.store.CreateRunWithID(tempRunID, repoID, req.Prompt, workspacePath)
 	if errors.Is(err, store.ErrActiveRunExists) {
+		// Clean up workspace on conflict
+		_ = s.workspace.Cleanup(tempRunID)
 		writeError(w, http.StatusConflict, "conflict", "repo already has an active run")
 		return
 	}
 	if err != nil {
+		// Clean up workspace on error
+		_ = s.workspace.Cleanup(tempRunID)
 		writeError(w, http.StatusInternalServerError, "internal_error", "failed to create run")
 		return
 	}

@@ -85,6 +85,48 @@ func (s *Store) CreateRun(repoID, prompt, workspacePath string) (*Run, error) {
 	}, nil
 }
 
+// CreateRunWithID creates a new run with a specific ID. Returns ErrActiveRunExists if the repo
+// already has an active run. This is used when the workspace has already been created with
+// the run ID.
+func (s *Store) CreateRunWithID(id, repoID, prompt, workspacePath string) (*Run, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Check for existing active run
+	var exists int
+	err := s.db.QueryRow(
+		`SELECT 1 FROM runs WHERE repo_id = ? AND state IN ('running', 'waiting_input', 'waiting_approval') LIMIT 1`,
+		repoID,
+	).Scan(&exists)
+	if err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("check active run: %w", err)
+	}
+	if err == nil {
+		return nil, ErrActiveRunExists
+	}
+
+	now := time.Now().Unix()
+
+	_, err = s.db.Exec(
+		`INSERT INTO runs (id, repo_id, prompt, state, workspace_path, created_at, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		id, repoID, prompt, RunStateRunning, workspacePath, now, now,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("insert run: %w", err)
+	}
+
+	return &Run{
+		ID:            id,
+		RepoID:        repoID,
+		Prompt:        prompt,
+		State:         RunStateRunning,
+		WorkspacePath: workspacePath,
+		CreatedAt:     time.Unix(now, 0),
+		UpdatedAt:     time.Unix(now, 0),
+	}, nil
+}
+
 // GetRun retrieves a run by ID.
 func (s *Store) GetRun(id string) (*Run, error) {
 	s.mu.RLock()

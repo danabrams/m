@@ -49,10 +49,16 @@ func main() {
 	}
 	defer s.Close()
 
+	// Ensure workspaces directory exists
+	if err := os.MkdirAll(cfg.Workspaces.Path, 0755); err != nil {
+		log.Fatalf("failed to create workspaces directory: %v", err)
+	}
+
 	// Create and run server
 	srv := api.New(api.Config{
-		Port:   cfg.Server.Port,
-		APIKey: cfg.Server.APIKey,
+		Port:           cfg.Server.Port,
+		APIKey:         cfg.Server.APIKey,
+		WorkspacesPath: cfg.Workspaces.Path,
 	}, s)
 
 	if err := srv.Run(); err != nil {
