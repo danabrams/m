@@ -47,6 +47,9 @@ struct RunListView: View {
         .refreshable {
             await loadRuns()
         }
+        .navigationDestination(for: Run.self) { run in
+            RunDetailView(run: run, apiClient: apiClient)
+        }
     }
 
     private var emptyState: some View {
