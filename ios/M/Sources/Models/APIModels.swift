@@ -38,7 +38,7 @@ enum RunState: String, Codable, Equatable {
     case cancelled
 }
 
-struct Run: Identifiable, Codable, Equatable {
+struct Run: Identifiable, Codable, Equatable, Hashable {
     let id: String
     let repoID: String
     let prompt: String
