@@ -28,6 +28,21 @@ struct ServerListView: View {
             .sheet(isPresented: $showingAddServer) {
                 AddServerView(store: store)
             }
+            .navigationDestination(for: MServer.self) { server in
+                if let apiKey = try? KeychainService.shared.getAPIKey(for: server.id),
+                   let key = apiKey {
+                    RepoListView(
+                        server: server,
+                        apiClient: APIClient(server: server, apiKey: key)
+                    )
+                } else {
+                    ContentUnavailableView {
+                        Label("Authentication Error", systemImage: "key.slash")
+                    } description: {
+                        Text("Unable to retrieve API key for this server.")
+                    }
+                }
+            }
         }
     }
 
@@ -47,11 +62,13 @@ struct ServerListView: View {
     private var serverList: some View {
         List {
             ForEach(store.servers) { server in
-                ServerRowView(
-                    server: server,
-                    status: connectionStatuses[server.id] ?? .unknown,
-                    lastActivity: nil
-                )
+                NavigationLink(value: server) {
+                    ServerRowView(
+                        server: server,
+                        status: connectionStatuses[server.id] ?? .unknown,
+                        lastActivity: nil
+                    )
+                }
             }
             .onDelete(perform: store.deleteServers)
         }

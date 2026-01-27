@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Repo Models
 
-struct Repo: Identifiable, Codable, Equatable {
+struct Repo: Identifiable, Codable, Equatable, Hashable {
     let id: String
     let name: String
     let gitURL: String?
