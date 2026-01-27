@@ -51,7 +51,7 @@ func TestAuthMiddleware(t *testing.T) {
 		{"no auth", "", http.StatusUnauthorized},
 		{"invalid format", "Basic abc", http.StatusUnauthorized},
 		{"wrong key", "Bearer wrong-key", http.StatusUnauthorized},
-		{"valid key", "Bearer test-key", http.StatusNotImplemented}, // endpoint returns 501
+		{"valid key", "Bearer test-key", http.StatusOK}, // endpoint returns 200
 	}
 
 	for _, tt := range tests {

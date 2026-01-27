@@ -120,27 +120,11 @@ func (s *Server) Run() error {
 	return nil
 }
 
-// Placeholder handlers - to be implemented in handlers.go
+// Placeholder handlers - to be implemented
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"status":"ok"}`))
-}
-
-func (s *Server) handleListRepos(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusNotImplemented, "not_implemented", "not implemented")
-}
-
-func (s *Server) handleCreateRepo(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusNotImplemented, "not_implemented", "not implemented")
-}
-
-func (s *Server) handleGetRepo(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusNotImplemented, "not_implemented", "not implemented")
-}
-
-func (s *Server) handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusNotImplemented, "not_implemented", "not implemented")
 }
 
 func (s *Server) handleListRuns(w http.ResponseWriter, r *http.Request) {
