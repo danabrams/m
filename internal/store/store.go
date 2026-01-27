@@ -101,6 +101,24 @@ func (s *Store) migrate() error {
 			platform TEXT NOT NULL CHECK(platform IN ('ios')),
 			created_at INTEGER NOT NULL
 		);
+
+		CREATE TABLE IF NOT EXISTS interactions (
+			id TEXT PRIMARY KEY,
+			request_id TEXT UNIQUE NOT NULL,
+			run_id TEXT NOT NULL REFERENCES runs(id),
+			type TEXT NOT NULL CHECK(type IN ('approval', 'input')),
+			tool TEXT NOT NULL,
+			payload TEXT,
+			state TEXT NOT NULL CHECK(state IN ('pending', 'resolved')),
+			decision TEXT,
+			message TEXT,
+			response TEXT,
+			created_at INTEGER NOT NULL,
+			resolved_at INTEGER
+		);
+		CREATE INDEX IF NOT EXISTS idx_interactions_run_id ON interactions(run_id);
+		CREATE INDEX IF NOT EXISTS idx_interactions_request_id ON interactions(request_id);
+		CREATE INDEX IF NOT EXISTS idx_interactions_state ON interactions(state);
 	`
 
 	_, err := s.db.Exec(schema)
