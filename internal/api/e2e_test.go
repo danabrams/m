@@ -126,14 +126,14 @@ func TestE2E_Authentication(t *testing.T) {
 			path:       "/api/repos",
 			method:     "GET",
 			auth:       "bearer test-api-key",
-			wantStatus: http.StatusNotImplemented, // endpoint not implemented yet
+			wantStatus: http.StatusOK,
 		},
 		{
 			name:       "valid API key - uppercase Bearer",
 			path:       "/api/repos",
 			method:     "GET",
 			auth:       "Bearer test-api-key",
-			wantStatus: http.StatusNotImplemented, // endpoint not implemented yet
+			wantStatus: http.StatusOK,
 		},
 	}
 
