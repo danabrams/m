@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -162,12 +164,73 @@ func (s *Server) handleResolveApproval(w http.ResponseWriter, r *http.Request) {
 	writeError(w, http.StatusNotImplemented, "not_implemented", "not implemented")
 }
 
+// registerDeviceRequest is the request body for registering a device.
+type registerDeviceRequest struct {
+	Token    string `json:"token"`
+	Platform string `json:"platform"`
+}
+
+// deviceResponse represents a device in API responses.
+type deviceResponse struct {
+	Token     string `json:"token"`
+	Platform  string `json:"platform"`
+	CreatedAt int64  `json:"created_at"`
+}
+
 func (s *Server) handleRegisterDevice(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusNotImplemented, "not_implemented", "not implemented")
+	var req registerDeviceRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_input", "invalid JSON body")
+		return
+	}
+
+	if req.Token == "" {
+		writeError(w, http.StatusBadRequest, "invalid_input", "token is required")
+		return
+	}
+
+	if req.Platform == "" {
+		writeError(w, http.StatusBadRequest, "invalid_input", "platform is required")
+		return
+	}
+
+	// Validate platform
+	if req.Platform != string(store.PlatformIOS) {
+		writeError(w, http.StatusBadRequest, "invalid_input", "invalid platform, must be 'ios'")
+		return
+	}
+
+	device, err := s.store.CreateDevice(req.Token, store.Platform(req.Platform))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "failed to register device")
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, deviceResponse{
+		Token:     device.Token,
+		Platform:  string(device.Platform),
+		CreatedAt: device.CreatedAt.Unix(),
+	})
 }
 
 func (s *Server) handleUnregisterDevice(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusNotImplemented, "not_implemented", "not implemented")
+	token := r.PathValue("token")
+	if token == "" {
+		writeError(w, http.StatusBadRequest, "invalid_input", "token is required")
+		return
+	}
+
+	err := s.store.DeleteDevice(token)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "device not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "failed to unregister device")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleInteractionRequest(w http.ResponseWriter, r *http.Request) {
