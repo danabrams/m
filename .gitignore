@@ -2,3 +2,10 @@
 .claude/
 .beads/
 .logs/
+
+# Swift
+.build/
+.swiftpm/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+DerivedData/
