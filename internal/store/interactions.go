@@ -216,6 +216,35 @@ func (s *Store) ResolveInteraction(id string, decision InteractionDecision, mess
 	return nil
 }
 
+// ListInteractions retrieves all interactions with optional filters.
+func (s *Store) ListInteractions(runID string, state *InteractionState) ([]*Interaction, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	query := `SELECT id, request_id, run_id, type, tool, payload, state, decision, message, response, created_at, resolved_at
+		 FROM interactions WHERE 1=1`
+	args := []any{}
+
+	if runID != "" {
+		query += " AND run_id = ?"
+		args = append(args, runID)
+	}
+	if state != nil {
+		query += " AND state = ?"
+		args = append(args, string(*state))
+	}
+
+	query += " ORDER BY created_at DESC"
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query interactions: %w", err)
+	}
+	defer rows.Close()
+
+	return scanInteractions(rows)
+}
+
 // DeleteInteractionsByRun deletes all interactions for a run.
 func (s *Store) DeleteInteractionsByRun(runID string) error {
 	s.mu.Lock()
