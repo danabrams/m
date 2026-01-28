@@ -24,6 +24,7 @@ struct AddServerView: View {
                     TextField("Name", text: $name)
                         .textContentType(.organizationName)
                         .autocorrectionDisabled()
+                        .accessibilityIdentifier("server-name-field")
 
                     TextField("URL", text: $urlString)
                         .textContentType(.URL)
@@ -32,6 +33,7 @@ struct AddServerView: View {
                         .textInputAutocapitalization(.never)
                         #endif
                         .autocorrectionDisabled()
+                        .accessibilityIdentifier("server-url-field")
 
                     SecureField("API Key", text: $apiKey)
                         .textContentType(.password)
@@ -39,6 +41,7 @@ struct AddServerView: View {
                         .textInputAutocapitalization(.never)
                         #endif
                         .autocorrectionDisabled()
+                        .accessibilityIdentifier("server-apikey-field")
                 }
 
                 if let error {
@@ -58,12 +61,14 @@ struct AddServerView: View {
                     Button("Cancel") {
                         dismiss()
                     }
+                    .accessibilityIdentifier("cancel-add-server")
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") {
                         save()
                     }
                     .disabled(!isValid)
+                    .accessibilityIdentifier("save-server")
                 }
             }
         }

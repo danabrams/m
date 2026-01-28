@@ -20,6 +20,7 @@ struct NewRunView: View {
                     .padding(12)
                     .background(.fill.tertiary)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .accessibilityIdentifier("run-prompt-editor")
                     .overlay(alignment: .topLeading) {
                         if prompt.isEmpty {
                             Text("What should the agent do?")
@@ -44,16 +45,19 @@ struct NewRunView: View {
                         dismiss()
                     }
                     .disabled(isCreating)
+                    .accessibilityIdentifier("cancel-new-run")
                 }
 
                 ToolbarItem(placement: .confirmationAction) {
                     if isCreating {
                         ProgressView()
+                            .accessibilityIdentifier("creating-run-spinner")
                     } else {
                         Button("Start") {
                             createRun()
                         }
                         .disabled(prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .accessibilityIdentifier("start-run")
                     }
                 }
             }
