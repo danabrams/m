@@ -225,6 +225,162 @@ M sets `CLAUDE_HOOKS_DIR` environment variable (or uses `--hooks-dir` flag) when
 
 ---
 
+## Setup Guide
+
+### Prerequisites
+
+1. **M server running** with a valid API key
+2. **Claude Code CLI** installed (`claude` command available)
+3. **jq** installed for JSON parsing
+4. **curl** for HTTP requests
+
+### Step 1: Prepare Hook Directory
+
+```bash
+# Create hooks directory with the PreToolUse script
+mkdir -p /path/to/hooks
+cp hooks/PreToolUse.sh /path/to/hooks/
+chmod +x /path/to/hooks/PreToolUse.sh
+```
+
+### Step 2: Set Environment Variables
+
+```bash
+export M_RUN_ID="test-run-123"
+export M_SERVER_URL="http://localhost:8080"
+export M_API_KEY="your-api-key"
+export M_HOOK_DEBUG="1"  # Optional: enable debug logging
+```
+
+### Step 3: Launch Claude Code with Hooks
+
+```bash
+# Using environment variable
+CLAUDE_HOOKS_DIR=/path/to/hooks claude
+
+# Or using CLI flag
+claude --hooks-dir /path/to/hooks
+```
+
+### How M Spawns Claude Code
+
+When M starts a run, it:
+
+1. Creates a temporary hooks directory
+2. Writes `PreToolUse.sh` with environment variables embedded
+3. Spawns Claude Code with `CLAUDE_HOOKS_DIR` set
+4. The hook intercepts tool calls and communicates with M
+
+Example spawn (internal):
+```go
+cmd := exec.Command("claude",
+    "--hooks-dir", hooksDir,
+    "--prompt", prompt,
+    workspaceDir,
+)
+cmd.Env = append(os.Environ(),
+    "M_RUN_ID="+runID,
+    "M_SERVER_URL="+serverURL,
+    "M_API_KEY="+apiKey,
+)
+```
+
+---
+
+## Testing
+
+### Manual Hook Test
+
+Test the hook without Claude Code by simulating a tool call:
+
+```bash
+# Set required environment
+export M_RUN_ID="test-run-123"
+export M_SERVER_URL="http://localhost:8080"
+export M_API_KEY="your-api-key"
+export M_HOOK_DEBUG="1"
+
+# Simulate an Edit tool call
+echo '{"tool": "Edit", "input": {"file_path": "/test.txt", "old_string": "a", "new_string": "b"}}' | \
+    ./hooks/PreToolUse.sh
+```
+
+Expected: Hook blocks waiting for approval from M server.
+
+### Integration Test Script
+
+Save as `test-hook.sh`:
+
+```bash
+#!/bin/bash
+# test-hook.sh - Test hook integration with M server
+
+set -euo pipefail
+
+: "${M_SERVER_URL:=http://localhost:8080}"
+: "${M_API_KEY:?M_API_KEY required}"
+
+# 1. Create a test repo
+REPO_ID=$(curl -s -X POST "$M_SERVER_URL/api/repos" \
+    -H "Authorization: Bearer $M_API_KEY" \
+    -H "Content-Type: application/json" \
+    -d '{"name": "hook-test", "path": "/tmp/hook-test"}' | jq -r '.id')
+
+echo "Created repo: $REPO_ID"
+
+# 2. Start a run
+RUN=$(curl -s -X POST "$M_SERVER_URL/api/repos/$REPO_ID/runs" \
+    -H "Authorization: Bearer $M_API_KEY" \
+    -H "Content-Type: application/json" \
+    -d '{"prompt": "Test prompt"}')
+
+RUN_ID=$(echo "$RUN" | jq -r '.id')
+echo "Started run: $RUN_ID"
+
+# 3. Simulate hook request (in background, it will block)
+{
+    sleep 1
+    echo "Sending simulated approval request..."
+    RESP=$(curl -s -X POST "$M_SERVER_URL/api/internal/interaction-request" \
+        -H "Authorization: Bearer $M_API_KEY" \
+        -H "Content-Type: application/json" \
+        -H "X-M-Request-ID: test-req-$(date +%s)" \
+        -d "{
+            \"run_id\": \"$RUN_ID\",
+            \"type\": \"approval\",
+            \"tool\": \"Edit\",
+            \"request_id\": \"test-req-$(date +%s)\",
+            \"payload\": {\"file_path\": \"/test.txt\"}
+        }")
+    echo "Hook response: $RESP"
+} &
+
+# 4. Wait briefly then approve
+sleep 2
+echo "Approving via API..."
+
+# Get pending approval
+APPROVAL=$(curl -s "$M_SERVER_URL/api/approvals?run_id=$RUN_ID&state=pending" \
+    -H "Authorization: Bearer $M_API_KEY")
+
+APPROVAL_ID=$(echo "$APPROVAL" | jq -r '.[0].id // empty')
+
+if [[ -n "$APPROVAL_ID" ]]; then
+    curl -s -X POST "$M_SERVER_URL/api/approvals/$APPROVAL_ID" \
+        -H "Authorization: Bearer $M_API_KEY" \
+        -H "Content-Type: application/json" \
+        -d '{"decision": "allow"}'
+    echo "Approved: $APPROVAL_ID"
+else
+    echo "No pending approval found"
+fi
+
+wait
+echo "Test complete"
+```
+
+---
+
 ## Configurable Tools
 
 Tools requiring interaction are configured via environment variables:
