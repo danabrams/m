@@ -8,6 +8,12 @@ final class APIClient {
     private let decoder: JSONDecoder
     private let encoder: JSONEncoder
 
+    /// The server URL for WebSocket connections.
+    var serverURL: URL { server.url }
+
+    /// The API key for WebSocket authentication.
+    var apiKeyForWebSocket: String { apiKey }
+
     /// Creates an API client for the given server.
     /// - Parameters:
     ///   - server: Server configuration
@@ -93,6 +99,13 @@ final class APIClient {
     func resolveApproval(id: String, approved: Bool, reason: String? = nil) async throws {
         let request = ResolveApprovalRequest(approved: approved, reason: reason)
         try await post("/api/approvals/\(id)/resolve", body: request)
+    }
+
+    // MARK: - Events
+
+    /// Lists events for a run (oldest first by sequence number).
+    func listEvents(runID: String) async throws -> [RunEvent] {
+        try await get("/api/runs/\(runID)/events")
     }
 
     // MARK: - Device Registration
