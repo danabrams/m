@@ -236,8 +236,10 @@ func (s *Server) handleSendInput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Notify any pending interaction request with the input text
+	interactionMgr.ResolveInputForRun(id, req.Text)
+
 	// Update state back to running
-	// Note: In a full implementation, this would also deliver the input to the agent
 	if err := s.store.UpdateRunState(id, store.RunStateRunning); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal_error", "failed to update run state")
 		return

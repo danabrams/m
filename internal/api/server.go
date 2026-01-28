@@ -143,23 +143,9 @@ func (s *Server) Run() error {
 	return nil
 }
 
-// Placeholder handlers - to be implemented
-
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Write([]byte(`{"status":"ok"}`))
-}
-
-func (s *Server) handleListPendingApprovals(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusNotImplemented, "not_implemented", "not implemented")
-}
-
-func (s *Server) handleGetApproval(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusNotImplemented, "not_implemented", "not implemented")
-}
-
-func (s *Server) handleResolveApproval(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusNotImplemented, "not_implemented", "not implemented")
 }
 
 func (s *Server) handleRegisterDevice(w http.ResponseWriter, r *http.Request) {
@@ -167,9 +153,5 @@ func (s *Server) handleRegisterDevice(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUnregisterDevice(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusNotImplemented, "not_implemented", "not implemented")
-}
-
-func (s *Server) handleInteractionRequest(w http.ResponseWriter, r *http.Request) {
 	writeError(w, http.StatusNotImplemented, "not_implemented", "not implemented")
 }
