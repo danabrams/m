@@ -4,7 +4,9 @@ import SwiftUI
 struct MApp: App {
     var body: some Scene {
         WindowGroup {
-            ServerListView()
+            ApprovalBannerContainer {
+                ServerListView()
+            }
         }
     }
 }

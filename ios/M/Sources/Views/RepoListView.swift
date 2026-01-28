@@ -32,6 +32,12 @@ struct RepoListView: View {
         .navigationDestination(for: Repo.self) { repo in
             RunListView(repo: repo, apiClient: apiClient)
         }
+        .onAppear {
+            ApprovalStore.shared.registerClient(apiClient, for: server.id)
+        }
+        .onDisappear {
+            ApprovalStore.shared.unregisterClient(for: server.id)
+        }
     }
 
     private var emptyState: some View {
