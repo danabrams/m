@@ -35,6 +35,7 @@ struct RunDetailView: View {
                     Button("Cancel", role: .destructive) {
                         cancelRun()
                     }
+                    .accessibilityIdentifier("cancel-run")
                 }
             }
         }
@@ -61,6 +62,7 @@ struct RunDetailView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(statusText)
                     .font(.headline)
+                    .accessibilityIdentifier("run-status-text")
                 Text("Updated \(currentRun.updatedAt, style: .relative)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -70,6 +72,7 @@ struct RunDetailView: View {
         .padding()
         .background(.fill.tertiary)
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .accessibilityIdentifier("run-status-section")
     }
 
     private var promptSection: some View {
