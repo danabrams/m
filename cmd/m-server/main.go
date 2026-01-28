@@ -16,8 +16,9 @@ import (
 // Config represents the server configuration file.
 type Config struct {
 	Server struct {
-		Port   int    `yaml:"port"`
-		APIKey string `yaml:"api_key"`
+		Port     int    `yaml:"port"`
+		APIKey   string `yaml:"api_key"`
+		DemoMode bool   `yaml:"demo_mode"`
 	} `yaml:"server"`
 	Storage struct {
 		Path string `yaml:"path"`
@@ -59,6 +60,7 @@ func main() {
 		Port:           cfg.Server.Port,
 		APIKey:         cfg.Server.APIKey,
 		WorkspacesPath: cfg.Workspaces.Path,
+		DemoMode:       cfg.Server.DemoMode,
 	}, s)
 
 	if err := srv.Run(); err != nil {
@@ -95,6 +97,9 @@ func loadConfig(path string) (*Config, error) {
 	}
 	if v := os.Getenv("M_WORKSPACES_PATH"); v != "" {
 		cfg.Workspaces.Path = v
+	}
+	if v := os.Getenv("M_DEMO_MODE"); v != "" {
+		cfg.Server.DemoMode = v == "true" || v == "1"
 	}
 
 	// Validate required fields
