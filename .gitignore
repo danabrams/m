@@ -3,6 +3,13 @@
 .beads/
 .logs/
 
+# Go binaries
+/m-seed
+/m-server
+
+# Data
+data/
+
 # Swift
 .build/
 .swiftpm/
