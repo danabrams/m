@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"sync"
@@ -153,6 +154,7 @@ func (s *Server) handleInteractionRequest(w http.ResponseWriter, r *http.Request
 	interactionType := store.InteractionType(req.Type)
 	interaction, err := s.store.CreateInteraction(requestID, req.RunID, interactionType, req.Tool, payloadStr)
 
+	isNewInteraction := false
 	if errors.Is(err, store.ErrDuplicateRequest) {
 		// Duplicate request - check if already resolved
 		existing, err := s.store.GetInteractionByRequestID(requestID)
@@ -175,6 +177,28 @@ func (s *Server) handleInteractionRequest(w http.ResponseWriter, r *http.Request
 		log.Printf("interaction-request: create interaction: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal_error", "failed to create interaction")
 		return
+	} else {
+		isNewInteraction = true
+	}
+
+	// Emit input_requested event for new input interactions
+	if isNewInteraction && interactionType == store.InteractionTypeInput {
+		// Extract question from payload
+		var question string
+		if payloadStr != nil {
+			var payload struct {
+				Question string `json:"question"`
+			}
+			if err := json.Unmarshal([]byte(*payloadStr), &payload); err == nil {
+				question = payload.Question
+			}
+		}
+
+		eventData := fmt.Sprintf(`{"question":%s}`, jsonString(question))
+		if _, err := s.store.CreateEvent(req.RunID, "input_requested", &eventData); err != nil {
+			log.Printf("interaction-request: failed to create input_requested event: %v", err)
+			// Don't fail the request, just log
+		}
 	}
 
 	// Update run state based on interaction type
@@ -279,8 +303,23 @@ func (s *Server) ResolveInteraction(id string, decision store.InteractionDecisio
 	// Broadcast state change
 	s.hub.BroadcastState(interaction.RunID, store.RunStateRunning)
 
+	// Emit input_received event for input interactions
+	if interaction.Type == store.InteractionTypeInput && response != nil {
+		eventData := fmt.Sprintf(`{"text":%s}`, jsonString(*response))
+		if _, err := s.store.CreateEvent(interaction.RunID, "input_received", &eventData); err != nil {
+			log.Printf("resolve-interaction: failed to create input_received event: %v", err)
+			// Don't fail, just log
+		}
+	}
+
 	// Notify waiting request
 	s.interactionNotifier.Notify(id)
 
 	return nil
+}
+
+// jsonString escapes a string for use in JSON.
+func jsonString(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
 }
