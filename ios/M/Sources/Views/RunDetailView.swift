@@ -4,13 +4,13 @@ import SwiftUI
 /// Placeholder implementation - will be expanded with event feed, approvals, etc.
 struct RunDetailView: View {
     let run: Run
-    let apiClient: APIClient
+    let apiClient: APIClientProtocol
 
     @State private var currentRun: Run
     @State private var isLoading = false
     @State private var error: MError?
 
-    init(run: Run, apiClient: APIClient) {
+    init(run: Run, apiClient: APIClientProtocol) {
         self.run = run
         self.apiClient = apiClient
         self._currentRun = State(initialValue: run)
@@ -25,6 +25,7 @@ struct RunDetailView: View {
             }
             .padding()
         }
+        .accessibilityIdentifier("runDetail.eventFeed")
         .navigationTitle("Run")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -35,6 +36,7 @@ struct RunDetailView: View {
                     Button("Cancel", role: .destructive) {
                         cancelRun()
                     }
+                    .accessibilityIdentifier("runDetail.cancelButton")
                 }
             }
         }
@@ -61,6 +63,7 @@ struct RunDetailView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(statusText)
                     .font(.headline)
+                    .accessibilityIdentifier("runDetail.statusLabel")
                 Text("Updated \(currentRun.updatedAt, style: .relative)")
                     .font(.caption)
                     .foregroundStyle(.secondary)

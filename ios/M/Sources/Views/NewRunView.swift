@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Sheet for entering a prompt to start a new run.
 struct NewRunView: View {
-    let apiClient: APIClient
+    let apiClient: APIClientProtocol
     let repoID: String
     let onCreated: (Run) -> Void
 
@@ -30,6 +30,7 @@ struct NewRunView: View {
                                 .allowsHitTesting(false)
                         }
                     }
+                    .accessibilityIdentifier("newRun.promptField")
 
                 Spacer()
             }
@@ -44,6 +45,7 @@ struct NewRunView: View {
                         dismiss()
                     }
                     .disabled(isCreating)
+                    .accessibilityIdentifier("newRun.cancelButton")
                 }
 
                 ToolbarItem(placement: .confirmationAction) {
@@ -54,6 +56,7 @@ struct NewRunView: View {
                             createRun()
                         }
                         .disabled(prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .accessibilityIdentifier("newRun.startButton")
                     }
                 }
             }

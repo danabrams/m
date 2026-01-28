@@ -2,7 +2,7 @@ import SwiftUI
 
 /// Sheet for responding to an agent's question.
 struct InputPromptView: View {
-    let apiClient: APIClient
+    let apiClient: APIClientProtocol
     let runID: String
     let question: String
     let onSent: () -> Void
@@ -24,6 +24,7 @@ struct InputPromptView: View {
                         .font(.body)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding()
+                        .accessibilityIdentifier("inputPrompt.questionLabel")
                 }
                 .frame(maxHeight: 200)
                 .background(.fill.tertiary)
@@ -49,6 +50,7 @@ struct InputPromptView: View {
                             }
                         }
                         .frame(minHeight: 100)
+                        .accessibilityIdentifier("inputPrompt.responseField")
 
                     HStack {
                         Spacer()
@@ -60,6 +62,7 @@ struct InputPromptView: View {
                             }
                             .buttonStyle(.borderedProminent)
                             .disabled(response.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .accessibilityIdentifier("inputPrompt.sendButton")
                         }
                     }
                 }
@@ -75,6 +78,7 @@ struct InputPromptView: View {
                         dismiss()
                     }
                     .disabled(isSending)
+                    .accessibilityIdentifier("inputPrompt.cancelButton")
                 }
             }
             .alert("Error", isPresented: .constant(error != nil)) {

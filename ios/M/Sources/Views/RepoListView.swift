@@ -3,7 +3,7 @@ import SwiftUI
 /// Screen showing repos in a selected server.
 struct RepoListView: View {
     let server: MServer
-    let apiClient: APIClient
+    let apiClient: APIClientProtocol
 
     @State private var repos: [Repo] = []
     @State private var repoRunInfo: [String: RepoRunInfo] = [:]
@@ -40,6 +40,7 @@ struct RepoListView: View {
         } description: {
             Text("Repos will appear here once created.")
         }
+        .accessibilityIdentifier("repoList.emptyState")
     }
 
     private var repoList: some View {
@@ -53,6 +54,7 @@ struct RepoListView: View {
                         lastRunState: info?.lastRunState
                     )
                 }
+                .accessibilityIdentifier("repoList.repoRow")
             }
         }
         .listStyle(.plain)

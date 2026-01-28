@@ -3,7 +3,7 @@ import SwiftUI
 /// Screen showing runs for a selected repo.
 struct RunListView: View {
     let repo: Repo
-    let apiClient: APIClient
+    let apiClient: APIClientProtocol
 
     @State private var runs: [Run] = []
     @State private var isLoading = true
@@ -30,6 +30,7 @@ struct RunListView: View {
                 } label: {
                     Image(systemName: "plus")
                 }
+                .accessibilityIdentifier("runList.addButton")
             }
         }
         .sheet(isPresented: $showingNewRun) {
@@ -62,6 +63,7 @@ struct RunListView: View {
                 showingNewRun = true
             }
             .buttonStyle(.borderedProminent)
+            .accessibilityIdentifier("runList.emptyState.addButton")
         }
     }
 
@@ -71,6 +73,7 @@ struct RunListView: View {
                 NavigationLink(value: run) {
                     RunRowView(run: run)
                 }
+                .accessibilityIdentifier("runList.runRow")
             }
         }
         .listStyle(.plain)

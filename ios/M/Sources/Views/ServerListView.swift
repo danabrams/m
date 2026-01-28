@@ -23,14 +23,20 @@ struct ServerListView: View {
                     } label: {
                         Image(systemName: "plus")
                     }
+                    .accessibilityIdentifier("serverList.addButton")
                 }
             }
             .sheet(isPresented: $showingAddServer) {
                 AddServerView(store: store)
             }
             .navigationDestination(for: MServer.self) { server in
-                if let apiKey = try? KeychainService.shared.getAPIKey(for: server.id),
-                   let key = apiKey {
+                if TestingEnvironment.isUITesting {
+                    // Use stub API client for UI testing
+                    RepoListView(
+                        server: server,
+                        apiClient: StubAPIClient(scenario: TestingEnvironment.scenario)
+                    )
+                } else if let key = try? KeychainService.shared.getAPIKey(for: server.id).flatMap({ $0 }) {
                     RepoListView(
                         server: server,
                         apiClient: APIClient(server: server, apiKey: key)
@@ -56,6 +62,7 @@ struct ServerListView: View {
                 showingAddServer = true
             }
             .buttonStyle(.borderedProminent)
+            .accessibilityIdentifier("serverList.emptyState.addButton")
         }
     }
 
@@ -69,6 +76,7 @@ struct ServerListView: View {
                         lastActivity: nil
                     )
                 }
+                .accessibilityIdentifier("serverList.serverRow")
             }
             .onDelete(perform: store.deleteServers)
         }
