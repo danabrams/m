@@ -91,6 +91,8 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/runs/{id}/input", s.handleSendInput)
 
 	// Approvals
+	mux.HandleFunc("GET /api/approvals", s.handleListApprovals)
+	mux.HandleFunc("POST /api/approvals", s.handleCreateApproval)
 	mux.HandleFunc("GET /api/approvals/pending", s.handleListPendingApprovals)
 	mux.HandleFunc("GET /api/approvals/{id}", s.handleGetApproval)
 	mux.HandleFunc("POST /api/approvals/{id}/resolve", s.handleResolveApproval)
@@ -176,6 +178,94 @@ func toInteractionListResponse(i *store.Interaction) interactionListResponse {
 		resp.Payload = json.RawMessage(*i.Payload)
 	}
 	return resp
+}
+
+// handleListApprovals returns all interactions with optional filtering.
+func (s *Server) handleListApprovals(w http.ResponseWriter, r *http.Request) {
+	runID := r.URL.Query().Get("run_id")
+	stateParam := r.URL.Query().Get("state")
+
+	var state *store.InteractionState
+	if stateParam != "" {
+		s := store.InteractionState(stateParam)
+		if s != store.InteractionStatePending && s != store.InteractionStateResolved {
+			writeError(w, http.StatusBadRequest, "invalid_input", "state must be 'pending' or 'resolved'")
+			return
+		}
+		state = &s
+	}
+
+	interactions, err := s.store.ListInteractions(runID, state)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "failed to list approvals")
+		return
+	}
+
+	resp := make([]interactionListResponse, len(interactions))
+	for i, interaction := range interactions {
+		resp[i] = toInteractionListResponse(interaction)
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// createApprovalRequest is the request body for creating an approval.
+type createApprovalRequest struct {
+	RunID   string  `json:"run_id"`
+	Type    string  `json:"type"`
+	Tool    string  `json:"tool"`
+	Payload *string `json:"payload,omitempty"`
+}
+
+// handleCreateApproval creates a new approval request.
+func (s *Server) handleCreateApproval(w http.ResponseWriter, r *http.Request) {
+	var req createApprovalRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_input", "invalid JSON body")
+		return
+	}
+
+	if req.RunID == "" {
+		writeError(w, http.StatusBadRequest, "invalid_input", "run_id is required")
+		return
+	}
+	if req.Type == "" {
+		writeError(w, http.StatusBadRequest, "invalid_input", "type is required")
+		return
+	}
+	if req.Tool == "" {
+		writeError(w, http.StatusBadRequest, "invalid_input", "tool is required")
+		return
+	}
+
+	// Validate type
+	interactionType := store.InteractionType(req.Type)
+	if interactionType != store.InteractionTypeApproval && interactionType != store.InteractionTypeInput {
+		writeError(w, http.StatusBadRequest, "invalid_input", "type must be 'approval' or 'input'")
+		return
+	}
+
+	// Verify run exists
+	_, err := s.store.GetRun(req.RunID)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "run not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "failed to get run")
+		return
+	}
+
+	// Generate a unique request ID for this approval
+	requestID := fmt.Sprintf("api-%d", time.Now().UnixNano())
+
+	interaction, err := s.store.CreateInteraction(requestID, req.RunID, interactionType, req.Tool, req.Payload)
+	if err != nil && !errors.Is(err, store.ErrDuplicateRequest) {
+		writeError(w, http.StatusInternalServerError, "internal_error", "failed to create approval")
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, toInteractionDetailResponse(interaction))
 }
 
 // handleListPendingApprovals returns all pending interactions (approvals and inputs).
