@@ -24,6 +24,7 @@ type Server struct {
 	hub                 *Hub
 	workspace           *run.WorkspaceManager
 	interactionNotifier *InteractionNotifier
+	demoMode            bool
 }
 
 // Config holds server configuration.
@@ -31,6 +32,7 @@ type Config struct {
 	Port           int
 	APIKey         string
 	WorkspacesPath string
+	DemoMode       bool
 }
 
 // New creates a new Server.
@@ -50,6 +52,7 @@ func New(cfg Config, s *store.Store) *Server {
 		hub:                 hub,
 		workspace:           run.NewWorkspaceManager(workspacesPath),
 		interactionNotifier: NewInteractionNotifier(),
+		demoMode:            cfg.DemoMode,
 	}
 
 	mux := http.NewServeMux()

@@ -1,10 +1,11 @@
 # M Server Configuration
 # Environment variables override these values:
-#   M_PORT, M_API_KEY, M_DB_PATH, M_WORKSPACES_PATH
+#   M_PORT, M_API_KEY, M_DB_PATH, M_WORKSPACES_PATH, M_DEMO_MODE
 
 server:
   port: 8080
   api_key: "your-api-key-here"
+  # demo_mode: false  # Enable to use mock agent with scripted responses for demos
 
 storage:
   path: "./data/m.db"

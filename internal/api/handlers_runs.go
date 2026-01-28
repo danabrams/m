@@ -1,11 +1,15 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
+	"time"
 
 	"github.com/anthropics/m/internal/store"
+	"github.com/anthropics/m/internal/testutil"
 	"github.com/google/uuid"
 )
 
@@ -130,6 +134,11 @@ func (s *Server) handleCreateRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// If demo mode is enabled, start the mock agent
+	if s.demoMode {
+		go s.executeDemoRun(run.ID)
+	}
+
 	writeJSON(w, http.StatusCreated, toRunResponse(run))
 }
 
@@ -193,6 +202,155 @@ func (s *Server) handleCancelRun(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, toRunResponse(run))
+}
+
+// executeDemoRun runs a mock agent for demo purposes.
+func (s *Server) executeDemoRun(runID string) {
+	ctx := context.Background()
+
+	// Update run state to running
+	if err := s.store.UpdateRunState(runID, store.RunStateRunning); err != nil {
+		log.Printf("failed to update run state to running: %v", err)
+		return
+	}
+
+	// Broadcast run started event
+	s.broadcastRunEvent(runID, map[string]interface{}{
+		"type":      "run_started",
+		"run_id":    runID,
+		"timestamp": time.Now().Unix(),
+	})
+
+	// Create mock agent with demo scenario
+	agent := testutil.NewMockAgent(CreateDemoScenario())
+	if err := agent.Start(ctx); err != nil {
+		log.Printf("failed to start demo agent: %v", err)
+		_ = s.store.UpdateRunState(runID, store.RunStateFailed)
+		return
+	}
+
+	// Process agent events
+	for {
+		select {
+		case msg, ok := <-agent.Stdout():
+			if !ok {
+				// Agent finished
+				_ = s.store.UpdateRunState(runID, store.RunStateCompleted)
+				s.broadcastRunEvent(runID, map[string]interface{}{
+					"type":      "run_completed",
+					"run_id":    runID,
+					"timestamp": time.Now().Unix(),
+				})
+				return
+			}
+
+			// Broadcast stdout event
+			s.broadcastRunEvent(runID, map[string]interface{}{
+				"type":      "agent_output",
+				"run_id":    runID,
+				"stream":    "stdout",
+				"data":      msg,
+				"timestamp": time.Now().Unix(),
+			})
+
+		case msg, ok := <-agent.Stderr():
+			if !ok {
+				continue
+			}
+
+			// Broadcast stderr event
+			s.broadcastRunEvent(runID, map[string]interface{}{
+				"type":      "agent_output",
+				"run_id":    runID,
+				"stream":    "stderr",
+				"data":      msg,
+				"timestamp": time.Now().Unix(),
+			})
+
+		case req, ok := <-agent.ApprovalRequests():
+			if !ok {
+				continue
+			}
+
+			// Update run state to waiting for approval
+			_ = s.store.UpdateRunState(runID, store.RunStateWaitingApproval)
+
+			// Create interaction in store
+			payloadJSON, _ := json.Marshal(req.Payload)
+			payloadStr := string(payloadJSON)
+			interaction, err := s.store.CreateInteraction(req.ID, runID, store.InteractionTypeApproval, req.Tool, &payloadStr)
+			if err != nil {
+				log.Printf("failed to create interaction: %v", err)
+				agent.Cancel()
+				_ = s.store.UpdateRunState(runID, store.RunStateFailed)
+				return
+			}
+
+			// Broadcast approval request event
+			s.broadcastRunEvent(runID, map[string]interface{}{
+				"type":          "approval_request",
+				"run_id":        runID,
+				"interaction_id": interaction.ID,
+				"approval_type": req.Type,
+				"tool":          req.Tool,
+				"timestamp":     time.Now().Unix(),
+			})
+
+			// Wait for interaction to be resolved
+			go s.waitForInteractionResolution(runID, interaction.ID, agent)
+		}
+	}
+}
+
+// waitForInteractionResolution polls for interaction resolution and responds to the agent.
+func (s *Server) waitForInteractionResolution(runID, interactionID string, agent *testutil.MockAgent) {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		interaction, err := s.store.GetInteraction(interactionID)
+		if err != nil {
+			log.Printf("failed to get interaction: %v", err)
+			continue
+		}
+
+		if interaction.State == store.InteractionStateResolved {
+			// Respond to agent
+			approved := interaction.Decision != nil && *interaction.Decision == string(store.InteractionDecisionAllow)
+			agent.Respond(testutil.InteractionResponse{
+				Approved: approved,
+				Reason:   getReasonOrResponse(interaction),
+			})
+
+			// Update run state back to running if approved
+			if approved {
+				_ = s.store.UpdateRunState(runID, store.RunStateRunning)
+			} else {
+				_ = s.store.UpdateRunState(runID, store.RunStateCancelled)
+			}
+			return
+		}
+	}
+}
+
+// getReasonOrResponse returns the rejection reason or input response from an interaction.
+func getReasonOrResponse(i *store.Interaction) string {
+	if i.Message != nil {
+		return *i.Message
+	}
+	if i.Response != nil {
+		return *i.Response
+	}
+	return ""
+}
+
+// broadcastRunEvent broadcasts an event to all clients listening to a run's events.
+func (s *Server) broadcastRunEvent(runID string, event map[string]interface{}) {
+	eventJSON, _ := json.Marshal(event)
+	s.hub.broadcast <- &BroadcastMessage{
+		RunID:   runID,
+		Message: eventJSON,
+	}
 }
 
 // sendInputRequest is the request body for sending input to a run.
