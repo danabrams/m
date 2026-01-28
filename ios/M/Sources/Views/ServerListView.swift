@@ -29,11 +29,10 @@ struct ServerListView: View {
                 AddServerView(store: store)
             }
             .navigationDestination(for: MServer.self) { server in
-                if let apiKey = try? KeychainService.shared.getAPIKey(for: server.id),
-                   let key = apiKey {
+                if let apiKey = (try? KeychainService.shared.getAPIKey(for: server.id)) ?? nil {
                     RepoListView(
                         server: server,
-                        apiClient: APIClient(server: server, apiKey: key)
+                        apiClient: APIClient(server: server, apiKey: apiKey)
                     )
                 } else {
                     ContentUnavailableView {
