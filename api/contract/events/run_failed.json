@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://m.app/schemas/events/run_failed.json",
+  "title": "run_failed Event",
+  "description": "Emitted when the agent crashes or an error occurs",
+  "allOf": [
+    { "$ref": "base.json" }
+  ],
+  "properties": {
+    "type": {
+      "const": "run_failed"
+    },
+    "data": {
+      "type": "object",
+      "properties": {
+        "error": {
+          "type": "string",
+          "description": "Error message describing what went wrong"
+        }
+      },
+      "required": ["error"]
+    }
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://m.app/schemas/events/run_cancelled.json",
+  "title": "run_cancelled Event",
+  "description": "Emitted when the user cancels a run",
+  "allOf": [
+    { "$ref": "base.json" }
+  ],
+  "properties": {
+    "type": {
+      "const": "run_cancelled"
+    },
+    "data": {
+      "type": "object",
+      "properties": {
+        "reason": {
+          "type": "string",
+          "description": "Reason for cancellation (e.g., 'user')"
+        }
+      },
+      "required": ["reason"]
+    }
+  }
+}

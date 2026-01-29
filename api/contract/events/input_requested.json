@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://m.app/schemas/events/input_requested.json",
+  "title": "input_requested Event",
+  "description": "Emitted when the agent asks the user a question",
+  "allOf": [
+    { "$ref": "base.json" }
+  ],
+  "properties": {
+    "type": {
+      "const": "input_requested"
+    },
+    "data": {
+      "type": "object",
+      "properties": {
+        "question": {
+          "type": "string",
+          "description": "The question displayed in the Input Prompt sheet"
+        }
+      },
+      "required": ["question"]
+    }
+  }
+}

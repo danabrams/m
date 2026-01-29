@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://m.app/schemas/events/run_completed.json",
+  "title": "run_completed Event",
+  "description": "Emitted when the agent finishes successfully (exit code 0)",
+  "allOf": [
+    { "$ref": "base.json" }
+  ],
+  "properties": {
+    "type": {
+      "const": "run_completed"
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": false
+    }
+  }
+}

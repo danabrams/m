@@ -1,0 +1,33 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://m.app/schemas/events/approval_resolved.json",
+  "title": "approval_resolved Event",
+  "description": "Emitted when a pending approval is resolved",
+  "allOf": [
+    { "$ref": "base.json" }
+  ],
+  "properties": {
+    "type": {
+      "const": "approval_resolved"
+    },
+    "data": {
+      "type": "object",
+      "properties": {
+        "approval_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Matches the approval_id from approval_requested"
+        },
+        "approved": {
+          "type": "boolean",
+          "description": "Whether the approval was granted"
+        },
+        "reason": {
+          "type": ["string", "null"],
+          "description": "Optional reason for the decision"
+        }
+      },
+      "required": ["approval_id", "approved", "reason"]
+    }
+  }
+}
