@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://m.app/schemas/events/stdout.json",
+  "title": "stdout Event",
+  "description": "Agent standard output stream",
+  "allOf": [
+    { "$ref": "base.json" }
+  ],
+  "properties": {
+    "type": {
+      "const": "stdout"
+    },
+    "data": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "Output text content"
+        }
+      },
+      "required": ["text"]
+    }
+  }
+}

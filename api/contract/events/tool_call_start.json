@@ -1,0 +1,33 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://m.app/schemas/events/tool_call_start.json",
+  "title": "tool_call_start Event",
+  "description": "Emitted when agent begins a tool call",
+  "allOf": [
+    { "$ref": "base.json" }
+  ],
+  "properties": {
+    "type": {
+      "const": "tool_call_start"
+    },
+    "data": {
+      "type": "object",
+      "properties": {
+        "call_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Unique identifier for this tool call, used to pair with tool_call_end"
+        },
+        "tool": {
+          "type": "string",
+          "description": "Name of the tool being called"
+        },
+        "input": {
+          "type": "object",
+          "description": "Tool input parameters"
+        }
+      },
+      "required": ["call_id", "tool", "input"]
+    }
+  }
+}

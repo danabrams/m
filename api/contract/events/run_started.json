@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://m.app/schemas/events/run_started.json",
+  "title": "run_started Event",
+  "description": "Emitted when a run begins (not shown in UI feed, implied)",
+  "allOf": [
+    { "$ref": "base.json" }
+  ],
+  "properties": {
+    "type": {
+      "const": "run_started"
+    },
+    "data": {
+      "type": "object",
+      "additionalProperties": false
+    }
+  }
+}

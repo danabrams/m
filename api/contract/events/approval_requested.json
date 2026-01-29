@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://m.app/schemas/events/approval_requested.json",
+  "title": "approval_requested Event",
+  "description": "Emitted when the agent requests user approval",
+  "allOf": [
+    { "$ref": "base.json" }
+  ],
+  "properties": {
+    "type": {
+      "const": "approval_requested"
+    },
+    "data": {
+      "type": "object",
+      "properties": {
+        "approval_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Links to approvals table for full payload"
+        },
+        "type": {
+          "type": "string",
+          "enum": ["diff", "command", "generic"],
+          "description": "Type of approval being requested"
+        }
+      },
+      "required": ["approval_id", "type"]
+    }
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://m.app/schemas/events/tool_call_end.json",
+  "title": "tool_call_end Event",
+  "description": "Emitted when a tool call completes",
+  "allOf": [
+    { "$ref": "base.json" }
+  ],
+  "properties": {
+    "type": {
+      "const": "tool_call_end"
+    },
+    "data": {
+      "type": "object",
+      "properties": {
+        "call_id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Matches the call_id from tool_call_start"
+        },
+        "tool": {
+          "type": "string",
+          "description": "Name of the tool that was called"
+        },
+        "success": {
+          "type": "boolean",
+          "description": "Whether the tool call succeeded"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Execution time in milliseconds"
+        },
+        "error": {
+          "type": ["string", "null"],
+          "description": "Error message if success is false, null otherwise"
+        }
+      },
+      "required": ["call_id", "tool", "success", "duration_ms", "error"]
+    }
+  }
+}
