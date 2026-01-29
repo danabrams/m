@@ -1,0 +1,654 @@
+openapi: 3.0.3
+info:
+  title: Project M API
+  description: REST + WebSocket control plane for M.
+  version: 1.0.0
+
+servers:
+  - url: /api
+
+security:
+  - BearerAuth: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: All requests require `Authorization: Bearer <api_key>` header.
+
+  schemas:
+    Error:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - code
+            - message
+          properties:
+            code:
+              type: string
+              enum:
+                - invalid_input
+                - unauthorized
+                - not_found
+                - invalid_state
+                - conflict
+            message:
+              type: string
+
+    Repo:
+      type: object
+      required:
+        - id
+        - name
+        - git_url
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        git_url:
+          type: string
+
+    RepoCreate:
+      type: object
+      required:
+        - name
+        - git_url
+      properties:
+        name:
+          type: string
+        git_url:
+          type: string
+
+    Run:
+      type: object
+      required:
+        - id
+        - repo_id
+        - state
+      properties:
+        id:
+          type: string
+        repo_id:
+          type: string
+        prompt:
+          type: string
+        state:
+          type: string
+          enum:
+            - pending
+            - running
+            - waiting_approval
+            - waiting_input
+            - completed
+            - cancelled
+            - failed
+
+    RunCreate:
+      type: object
+      required:
+        - prompt
+      properties:
+        prompt:
+          type: string
+
+    InputRequest:
+      type: object
+      required:
+        - text
+      properties:
+        text:
+          type: string
+
+    Approval:
+      type: object
+      required:
+        - id
+        - run_id
+        - payload
+      properties:
+        id:
+          type: string
+        run_id:
+          type: string
+        payload:
+          type: object
+
+    ApprovalResolve:
+      type: object
+      required:
+        - approved
+      properties:
+        approved:
+          type: boolean
+        reason:
+          type: string
+
+    DeviceRegister:
+      type: object
+      required:
+        - token
+        - platform
+      properties:
+        token:
+          type: string
+        platform:
+          type: string
+          enum:
+            - ios
+
+    InteractionRequest:
+      type: object
+      required:
+        - run_id
+        - type
+        - request_id
+        - payload
+      properties:
+        run_id:
+          type: string
+        type:
+          type: string
+          enum:
+            - approval
+            - input
+        tool:
+          type: string
+        request_id:
+          type: string
+        payload:
+          type: object
+
+  responses:
+    BadRequest:
+      description: Invalid input
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: invalid_input
+              message: Invalid request body
+
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: unauthorized
+              message: Invalid or missing API key
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: not_found
+              message: Resource not found
+
+    Conflict:
+      description: Invalid state or conflict
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: invalid_state
+              message: Run is not in waiting_input state
+
+paths:
+  /repos:
+    get:
+      summary: List repos
+      operationId: listRepos
+      tags:
+        - Repos
+      responses:
+        '200':
+          description: List of repos
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Repo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+    post:
+      summary: Create repo
+      operationId: createRepo
+      tags:
+        - Repos
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RepoCreate'
+      responses:
+        '201':
+          description: Repo created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Repo'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /repos/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    get:
+      summary: Get repo
+      operationId: getRepo
+      tags:
+        - Repos
+      responses:
+        '200':
+          description: Repo details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Repo'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    delete:
+      summary: Delete repo
+      operationId: deleteRepo
+      tags:
+        - Repos
+      responses:
+        '204':
+          description: Repo deleted
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /repos/{repo_id}/runs:
+    parameters:
+      - name: repo_id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    get:
+      summary: List runs
+      description: List runs for a repo (newest first)
+      operationId: listRuns
+      tags:
+        - Runs
+      responses:
+        '200':
+          description: List of runs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Run'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+    post:
+      summary: Create run
+      operationId: createRun
+      tags:
+        - Runs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunCreate'
+      responses:
+        '201':
+          description: Run created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /runs/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    get:
+      summary: Get run
+      description: Get run details and current state
+      operationId: getRun
+      tags:
+        - Runs
+      responses:
+        '200':
+          description: Run details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /runs/{id}/cancel:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      summary: Cancel run
+      description: Cancel a running run. Returns 409 if run is already in a terminal state.
+      operationId: cancelRun
+      tags:
+        - Runs
+      responses:
+        '200':
+          description: Run cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /runs/{id}/input:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      summary: Send input
+      description: Send input to a run waiting for input. Returns 409 if run is not in waiting_input state.
+      operationId: sendInput
+      tags:
+        - Runs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InputRequest'
+      responses:
+        '200':
+          description: Input accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Run'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /approvals/pending:
+    get:
+      summary: List pending approvals
+      description: List all pending approvals (for banner)
+      operationId: listPendingApprovals
+      tags:
+        - Approvals
+      responses:
+        '200':
+          description: List of pending approvals
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Approval'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /approvals/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    get:
+      summary: Get approval
+      description: Get approval details and payload
+      operationId: getApproval
+      tags:
+        - Approvals
+      responses:
+        '200':
+          description: Approval details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Approval'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /approvals/{id}/resolve:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+
+    post:
+      summary: Resolve approval
+      operationId: resolveApproval
+      tags:
+        - Approvals
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApprovalResolve'
+      responses:
+        '200':
+          description: Approval resolved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Approval'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /devices:
+    post:
+      summary: Register device
+      description: Register a device for push notifications
+      operationId: registerDevice
+      tags:
+        - Push Notifications
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeviceRegister'
+      responses:
+        '201':
+          description: Device registered
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /devices/{token}:
+    parameters:
+      - name: token
+        in: path
+        required: true
+        schema:
+          type: string
+
+    delete:
+      summary: Unregister device
+      operationId: unregisterDevice
+      tags:
+        - Push Notifications
+      responses:
+        '204':
+          description: Device unregistered
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /internal/interaction-request:
+    post:
+      summary: Submit interaction request
+      description: |
+        Internal endpoint for hooks. Blocks until the interaction is resolved.
+        Requires X-M-Hook-Version and X-M-Request-ID headers.
+      operationId: submitInteractionRequest
+      tags:
+        - Internal
+      parameters:
+        - name: X-M-Hook-Version
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: X-M-Request-ID
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InteractionRequest'
+      responses:
+        '200':
+          description: Interaction resolved
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  approved:
+                    type: boolean
+                  reason:
+                    type: string
+                  text:
+                    type: string
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /runs/{id}/events:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: from_seq
+        in: query
+        required: false
+        schema:
+          type: integer
+        description: Replay events with seq > from_seq
+
+    get:
+      summary: WebSocket events stream
+      description: |
+        WebSocket endpoint for streaming run events.
+
+        **Connection:** `ws://host/api/runs/:id/events?from_seq=N`
+
+        **Authentication:** Authorization header with Bearer token
+
+        **Server -> Client Messages:**
+        - `{"type": "event", "event": {"id": "...", "seq": 1, "type": "stdout", "data": {...}, "created_at": 1234567890}}`
+        - `{"type": "state", "state": "waiting_approval"}`
+        - `{"type": "ping"}`
+
+        **Client -> Server Messages:**
+        - `{"type": "pong"}`
+
+        **Replay Behavior:**
+        On connect, server sends all events where seq > from_seq (or all events if from_seq omitted), then streams live events.
+      operationId: streamRunEvents
+      tags:
+        - Runs
+      responses:
+        '101':
+          description: WebSocket upgrade
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+tags:
+  - name: Repos
+    description: Repository management
+  - name: Runs
+    description: Run execution and control
+  - name: Approvals
+    description: Approval workflow
+  - name: Push Notifications
+    description: Device registration for push notifications
+  - name: Internal
+    description: Internal endpoints for hooks (not for external use)
