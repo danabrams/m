@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tool_call_start.json",
+  "title": "ToolCallStartData",
+  "description": "Data payload for tool_call_start event. Fires when agent begins a tool call.",
+  "type": "object",
+  "required": ["call_id", "tool", "input"],
+  "properties": {
+    "call_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier for this tool call. Used to pair with tool_call_end."
+    },
+    "tool": {
+      "type": "string",
+      "description": "Name of the tool being called (e.g., Edit, Bash, Read)"
+    },
+    "input": {
+      "type": "object",
+      "description": "Tool-specific input parameters",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

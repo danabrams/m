@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "approval_requested.json",
+  "title": "ApprovalRequestedData",
+  "description": "Data payload for approval_requested event. Links to approvals table.",
+  "type": "object",
+  "required": ["approval_id", "type"],
+  "properties": {
+    "approval_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier linking to approvals table. Payload lives in approvals.payload."
+    },
+    "type": {
+      "type": "string",
+      "enum": ["diff", "command", "generic"],
+      "description": "Type of approval being requested"
+    }
+  },
+  "additionalProperties": false
+}

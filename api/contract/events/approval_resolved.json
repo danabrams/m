@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "approval_resolved.json",
+  "title": "ApprovalResolvedData",
+  "description": "Data payload for approval_resolved event.",
+  "type": "object",
+  "required": ["approval_id", "approved"],
+  "properties": {
+    "approval_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier of the resolved approval"
+    },
+    "approved": {
+      "type": "boolean",
+      "description": "Whether the approval was granted"
+    },
+    "reason": {
+      "type": ["string", "null"],
+      "description": "Optional reason for approval/rejection"
+    }
+  },
+  "additionalProperties": false
+}

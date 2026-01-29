@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "stderr.json",
+  "title": "StderrData",
+  "description": "Data payload for stderr event. Agent error output stream.",
+  "type": "object",
+  "required": ["text"],
+  "properties": {
+    "text": {
+      "type": "string",
+      "description": "Error text content. May be batched (multiple lines) or chunked."
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "input_received.json",
+  "title": "InputReceivedData",
+  "description": "Data payload for input_received event. Records the user's response.",
+  "type": "object",
+  "required": ["text"],
+  "properties": {
+    "text": {
+      "type": "string",
+      "description": "The user's input response"
+    }
+  },
+  "additionalProperties": false
+}

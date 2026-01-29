@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "tool_call_end.json",
+  "title": "ToolCallEndData",
+  "description": "Data payload for tool_call_end event. Fires on tool call completion.",
+  "type": "object",
+  "required": ["call_id", "tool", "success", "duration_ms"],
+  "properties": {
+    "call_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "Unique identifier matching the corresponding tool_call_start"
+    },
+    "tool": {
+      "type": "string",
+      "description": "Name of the tool that was called"
+    },
+    "success": {
+      "type": "boolean",
+      "description": "Whether the tool call completed successfully"
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Duration of the tool call in milliseconds"
+    },
+    "error": {
+      "type": ["string", "null"],
+      "description": "Error message if success is false, null otherwise"
+    }
+  },
+  "additionalProperties": false
+}

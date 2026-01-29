@@ -1,0 +1,221 @@
+asyncapi: 3.0.0
+info:
+  title: Project M WebSocket API
+  version: 1.0.0
+  description: |
+    Real-time event streaming for Project M runs.
+
+    Events are append-only and ordered by a monotonic `seq` per run.
+    Clients can reconnect with `from_seq` to replay missed events.
+
+servers:
+  production:
+    host: "{host}"
+    protocol: wss
+    description: Production WebSocket server
+    variables:
+      host:
+        default: api.example.com
+    security:
+      - $ref: "#/components/securitySchemes/bearerAuth"
+
+channels:
+  runEvents:
+    address: /api/runs/{runId}/events
+    title: Run Events
+    description: Stream events for a specific run
+    parameters:
+      runId:
+        description: The unique identifier of the run
+        schema:
+          type: string
+          format: uuid
+    bindings:
+      ws:
+        query:
+          type: object
+          properties:
+            from_seq:
+              type: integer
+              minimum: 0
+              description: Resume from this sequence number (exclusive). Omit to receive all events.
+    messages:
+      eventMessage:
+        $ref: "#/components/messages/eventMessage"
+      stateMessage:
+        $ref: "#/components/messages/stateMessage"
+      pingMessage:
+        $ref: "#/components/messages/pingMessage"
+      pongMessage:
+        $ref: "#/components/messages/pongMessage"
+
+operations:
+  receiveRunEvents:
+    action: receive
+    channel:
+      $ref: "#/channels/runEvents"
+    summary: Receive events, state changes, and pings from server
+    description: |
+      On connect, server sends all events where `seq > from_seq` (or all events if `from_seq` omitted),
+      then streams live events. State messages are sent when run state changes. Ping messages are sent
+      periodically to keep the connection alive.
+    messages:
+      - $ref: "#/channels/runEvents/messages/eventMessage"
+      - $ref: "#/channels/runEvents/messages/stateMessage"
+      - $ref: "#/channels/runEvents/messages/pingMessage"
+
+  sendPong:
+    action: send
+    channel:
+      $ref: "#/channels/runEvents"
+    summary: Send pong response to server ping
+    description: Client should respond to ping messages with pong to keep connection alive.
+    messages:
+      - $ref: "#/channels/runEvents/messages/pongMessage"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: API key authentication via Bearer token
+
+  messages:
+    eventMessage:
+      name: event
+      title: Event Message
+      summary: An event from the run
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/EventMessage"
+
+    stateMessage:
+      name: state
+      title: State Message
+      summary: Run state change notification
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/StateMessage"
+
+    pingMessage:
+      name: ping
+      title: Ping Message
+      summary: Server ping for connection keepalive
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/PingMessage"
+
+    pongMessage:
+      name: pong
+      title: Pong Message
+      summary: Client pong response
+      contentType: application/json
+      payload:
+        $ref: "#/components/schemas/PongMessage"
+
+  schemas:
+    EventMessage:
+      type: object
+      required:
+        - type
+        - event
+      properties:
+        type:
+          type: string
+          const: event
+        event:
+          $ref: "#/components/schemas/Event"
+
+    StateMessage:
+      type: object
+      required:
+        - type
+        - state
+      properties:
+        type:
+          type: string
+          const: state
+        state:
+          $ref: "#/components/schemas/RunState"
+
+    PingMessage:
+      type: object
+      required:
+        - type
+      properties:
+        type:
+          type: string
+          const: ping
+
+    PongMessage:
+      type: object
+      required:
+        - type
+      properties:
+        type:
+          type: string
+          const: pong
+
+    Event:
+      type: object
+      required:
+        - id
+        - seq
+        - type
+        - data
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique event identifier
+        seq:
+          type: integer
+          minimum: 1
+          description: Monotonically increasing sequence number per run (gap-free)
+        type:
+          $ref: "#/components/schemas/EventType"
+        data:
+          oneOf:
+            - $ref: "events/run_started.json"
+            - $ref: "events/stdout.json"
+            - $ref: "events/stderr.json"
+            - $ref: "events/tool_call_start.json"
+            - $ref: "events/tool_call_end.json"
+            - $ref: "events/approval_requested.json"
+            - $ref: "events/approval_resolved.json"
+            - $ref: "events/input_requested.json"
+            - $ref: "events/input_received.json"
+            - $ref: "events/run_completed.json"
+            - $ref: "events/run_failed.json"
+            - $ref: "events/run_cancelled.json"
+        created_at:
+          type: integer
+          description: Unix timestamp (seconds since epoch)
+
+    EventType:
+      type: string
+      enum:
+        - run_started
+        - stdout
+        - stderr
+        - tool_call_start
+        - tool_call_end
+        - approval_requested
+        - approval_resolved
+        - input_requested
+        - input_received
+        - run_completed
+        - run_failed
+        - run_cancelled
+
+    RunState:
+      type: string
+      enum:
+        - running
+        - waiting_approval
+        - waiting_input
+        - completed
+        - failed
+        - cancelled
+      description: Current state of the run

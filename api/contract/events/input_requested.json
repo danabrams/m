@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "input_requested.json",
+  "title": "InputRequestedData",
+  "description": "Data payload for input_requested event. Contains the agent's question for display in Input Prompt sheet.",
+  "type": "object",
+  "required": ["question"],
+  "properties": {
+    "question": {
+      "type": "string",
+      "description": "The agent's question displayed in the Input Prompt sheet"
+    }
+  },
+  "additionalProperties": false
+}

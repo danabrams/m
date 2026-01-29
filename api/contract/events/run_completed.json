@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "run_completed.json",
+  "title": "RunCompletedData",
+  "description": "Data payload for run_completed event. Agent finished successfully (exit code 0).",
+  "type": "object",
+  "additionalProperties": false
+}

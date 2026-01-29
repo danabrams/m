@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "run_started.json",
+  "title": "RunStartedData",
+  "description": "Data payload for run_started event. Emitted when run begins.",
+  "type": "object",
+  "additionalProperties": false
+}

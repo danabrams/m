@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "run_cancelled.json",
+  "title": "RunCancelledData",
+  "description": "Data payload for run_cancelled event. User cancelled the run.",
+  "type": "object",
+  "required": ["reason"],
+  "properties": {
+    "reason": {
+      "type": "string",
+      "description": "Reason for cancellation (e.g., 'user')"
+    }
+  },
+  "additionalProperties": false
+}

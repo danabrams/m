@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "stdout.json",
+  "title": "StdoutData",
+  "description": "Data payload for stdout event. Agent output stream.",
+  "type": "object",
+  "required": ["text"],
+  "properties": {
+    "text": {
+      "type": "string",
+      "description": "Output text content. May be batched (multiple lines) or chunked."
+    }
+  },
+  "additionalProperties": false
+}

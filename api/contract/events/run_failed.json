@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "run_failed.json",
+  "title": "RunFailedData",
+  "description": "Data payload for run_failed event. Agent crashed or error occurred.",
+  "type": "object",
+  "required": ["error"],
+  "properties": {
+    "error": {
+      "type": "string",
+      "description": "Error message describing what went wrong"
+    }
+  },
+  "additionalProperties": false
+}
