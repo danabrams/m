@@ -1,0 +1,214 @@
+asyncapi: 3.0.0
+info:
+  title: Project M WebSocket API
+  version: 1.0.0
+  description: |
+    WebSocket API for real-time event streaming from agent runs.
+
+    ## Connection
+    Connect to `/api/runs/{runId}/events` with an Authorization header.
+    Optionally include `?from_seq=N` to replay events from a specific sequence number.
+
+    ## Replay Behavior
+    On connect, server sends all events where `seq > from_seq` (or all events if `from_seq` omitted),
+    then streams live events.
+
+servers:
+  production:
+    host: '{host}'
+    protocol: wss
+    description: Production WebSocket server
+    variables:
+      host:
+        description: The API host
+    security:
+      - $ref: '#/components/securitySchemes/bearerAuth'
+
+channels:
+  runEvents:
+    address: /api/runs/{runId}/events
+    description: WebSocket channel for streaming run events
+    parameters:
+      runId:
+        description: The unique identifier of the run
+        schema:
+          type: string
+          format: uuid
+    bindings:
+      ws:
+        query:
+          type: object
+          properties:
+            from_seq:
+              type: integer
+              minimum: 0
+              description: Replay events with seq greater than this value
+    messages:
+      eventMessage:
+        $ref: '#/components/messages/EventMessage'
+      stateMessage:
+        $ref: '#/components/messages/StateMessage'
+      pingMessage:
+        $ref: '#/components/messages/PingMessage'
+      pongMessage:
+        $ref: '#/components/messages/PongMessage'
+
+operations:
+  receiveRunEvents:
+    action: receive
+    channel:
+      $ref: '#/channels/runEvents'
+    description: Receive events, state updates, and pings from the server
+    messages:
+      - $ref: '#/channels/runEvents/messages/eventMessage'
+      - $ref: '#/channels/runEvents/messages/stateMessage'
+      - $ref: '#/channels/runEvents/messages/pingMessage'
+
+  sendPong:
+    action: send
+    channel:
+      $ref: '#/channels/runEvents'
+    description: Send pong response to server ping
+    messages:
+      - $ref: '#/channels/runEvents/messages/pongMessage'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: API key authentication via Bearer token
+
+  schemas:
+    # Base event envelope
+    Event:
+      type: object
+      required:
+        - id
+        - run_id
+        - seq
+        - type
+        - data
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique event identifier
+        run_id:
+          type: string
+          format: uuid
+          description: The run this event belongs to
+        seq:
+          type: integer
+          minimum: 1
+          description: Monotonically increasing sequence number per run
+        type:
+          type: string
+          enum:
+            - run_started
+            - stdout
+            - stderr
+            - tool_call_start
+            - tool_call_end
+            - approval_requested
+            - approval_resolved
+            - input_requested
+            - input_received
+            - run_completed
+            - run_failed
+            - run_cancelled
+          description: The event type
+        data:
+          oneOf:
+            - $ref: 'events/run_started.json'
+            - $ref: 'events/stdout.json'
+            - $ref: 'events/stderr.json'
+            - $ref: 'events/tool_call_start.json'
+            - $ref: 'events/tool_call_end.json'
+            - $ref: 'events/approval_requested.json'
+            - $ref: 'events/approval_resolved.json'
+            - $ref: 'events/input_requested.json'
+            - $ref: 'events/input_received.json'
+            - $ref: 'events/run_completed.json'
+            - $ref: 'events/run_failed.json'
+            - $ref: 'events/run_cancelled.json'
+          description: Event-specific payload
+        created_at:
+          type: integer
+          description: Unix timestamp when the event was created
+
+    # Run states
+    RunState:
+      type: string
+      enum:
+        - running
+        - waiting_approval
+        - waiting_input
+        - completed
+        - failed
+        - cancelled
+      description: Current state of the run
+
+  messages:
+    EventMessage:
+      name: event
+      title: Event Message
+      description: Server sends run events to the client
+      contentType: application/json
+      payload:
+        type: object
+        required:
+          - type
+          - event
+        properties:
+          type:
+            type: string
+            const: event
+          event:
+            $ref: '#/components/schemas/Event'
+
+    StateMessage:
+      name: state
+      title: State Message
+      description: Server sends state updates when run state changes
+      contentType: application/json
+      payload:
+        type: object
+        required:
+          - type
+          - state
+        properties:
+          type:
+            type: string
+            const: state
+          state:
+            $ref: '#/components/schemas/RunState'
+
+    PingMessage:
+      name: ping
+      title: Ping Message
+      description: Server sends ping to check client liveness
+      contentType: application/json
+      payload:
+        type: object
+        required:
+          - type
+        properties:
+          type:
+            type: string
+            const: ping
+
+    PongMessage:
+      name: pong
+      title: Pong Message
+      description: Client responds to server ping
+      contentType: application/json
+      payload:
+        type: object
+        required:
+          - type
+        properties:
+          type:
+            type: string
+            const: pong
