@@ -71,3 +71,12 @@ Links to `approvals` table via `approval_id`. The approval payload (diff content
 - `seq` is monotonically increasing per run, starting at 1
 - Used for WebSocket replay: client reconnects with `?from_seq=N` to resume
 - Gap-free within a run
+
+---
+
+## JSON Schema
+
+Machine-readable schemas for event validation:
+
+- [events.schema.json](schemas/events.schema.json) — Event envelope and all data payloads
+- [websocket.schema.json](schemas/websocket.schema.json) — WebSocket message formats

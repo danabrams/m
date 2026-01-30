@@ -1,0 +1,139 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://m.example.com/schemas/websocket.schema.json",
+  "title": "M WebSocket Message Schema",
+  "description": "JSON Schema for WebSocket message formats in Project M.",
+
+  "$defs": {
+    "runState": {
+      "type": "string",
+      "enum": [
+        "running",
+        "waiting_input",
+        "waiting_approval",
+        "completed",
+        "failed",
+        "cancelled"
+      ],
+      "description": "Current state of a run"
+    },
+
+    "eventDTO": {
+      "type": "object",
+      "description": "Event data transfer object sent over WebSocket (excludes run_id)",
+      "required": ["id", "seq", "type", "data", "created_at"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid",
+          "description": "Unique event identifier"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Monotonically increasing sequence number per run"
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "run_started",
+            "stdout",
+            "stderr",
+            "tool_call_start",
+            "tool_call_end",
+            "approval_requested",
+            "approval_resolved",
+            "input_requested",
+            "input_received",
+            "run_completed",
+            "run_failed",
+            "run_cancelled"
+          ],
+          "description": "Event type"
+        },
+        "data": {
+          "description": "Event-specific payload (see events.schema.json for data schemas)"
+        },
+        "created_at": {
+          "type": "integer",
+          "description": "Unix timestamp in milliseconds"
+        }
+      }
+    },
+
+    "eventMessage": {
+      "type": "object",
+      "description": "Server → Client: Event notification",
+      "required": ["type", "event"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "event"
+        },
+        "event": {
+          "$ref": "#/$defs/eventDTO"
+        }
+      }
+    },
+
+    "stateMessage": {
+      "type": "object",
+      "description": "Server → Client: Run state change notification",
+      "required": ["type", "state"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "state"
+        },
+        "state": {
+          "$ref": "#/$defs/runState"
+        }
+      }
+    },
+
+    "pingMessage": {
+      "type": "object",
+      "description": "Server → Client: Keepalive ping",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "ping"
+        }
+      }
+    },
+
+    "pongMessage": {
+      "type": "object",
+      "description": "Client → Server: Keepalive response",
+      "required": ["type"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "pong"
+        }
+      }
+    },
+
+    "serverMessage": {
+      "description": "Any message sent from server to client",
+      "oneOf": [
+        { "$ref": "#/$defs/eventMessage" },
+        { "$ref": "#/$defs/stateMessage" },
+        { "$ref": "#/$defs/pingMessage" }
+      ]
+    },
+
+    "clientMessage": {
+      "description": "Any message sent from client to server",
+      "oneOf": [
+        { "$ref": "#/$defs/pongMessage" }
+      ]
+    }
+  },
+
+  "oneOf": [
+    { "$ref": "#/$defs/serverMessage" },
+    { "$ref": "#/$defs/clientMessage" }
+  ]
+}
