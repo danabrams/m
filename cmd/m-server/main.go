@@ -6,36 +6,29 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strconv"
 
 	"github.com/anthropics/m/internal/api"
+	"github.com/anthropics/m/internal/config"
 	"github.com/anthropics/m/internal/store"
-	"gopkg.in/yaml.v3"
 )
-
-// Config represents the server configuration file.
-type Config struct {
-	Server struct {
-		Port     int    `yaml:"port"`
-		APIKey   string `yaml:"api_key"`
-		DemoMode bool   `yaml:"demo_mode"`
-	} `yaml:"server"`
-	Storage struct {
-		Path string `yaml:"path"`
-	} `yaml:"storage"`
-	Workspaces struct {
-		Path string `yaml:"path"`
-	} `yaml:"workspaces"`
-}
 
 func main() {
 	configPath := flag.String("config", "config.yaml", "path to config file")
 	flag.Parse()
 
-	cfg, err := loadConfig(*configPath)
+	cfg, err := config.Load(*configPath)
 	if err != nil {
 		log.Fatalf("failed to load config: %v", err)
 	}
+
+	// Validate required fields
+	if cfg.Server.APIKey == "" || cfg.Server.APIKey == "your-api-key-here" {
+		log.Printf("warning: API key not configured, set M_API_KEY environment variable")
+	}
+
+	// Log claude binary location for debugging
+	claudeBin := cfg.Claude.FindClaudeBinary()
+	log.Printf("using claude binary: %s", claudeBin)
 
 	// Ensure data directory exists
 	dbDir := filepath.Dir(cfg.Storage.Path)
@@ -66,46 +59,4 @@ func main() {
 	if err := srv.Run(); err != nil {
 		log.Fatalf("server error: %v", err)
 	}
-}
-
-func loadConfig(path string) (*Config, error) {
-	cfg := &Config{} // defaults
-
-	// Set defaults
-	cfg.Server.Port = 8080
-	cfg.Storage.Path = "./data/m.db"
-	cfg.Workspaces.Path = "./workspaces"
-
-	// Load config file if it exists
-	if data, err := os.ReadFile(path); err == nil {
-		if err := yaml.Unmarshal(data, cfg); err != nil {
-			return nil, err
-		}
-	}
-
-	// Environment variable overrides
-	if v := os.Getenv("M_PORT"); v != "" {
-		if port, err := strconv.Atoi(v); err == nil {
-			cfg.Server.Port = port
-		}
-	}
-	if v := os.Getenv("M_API_KEY"); v != "" {
-		cfg.Server.APIKey = v
-	}
-	if v := os.Getenv("M_DB_PATH"); v != "" {
-		cfg.Storage.Path = v
-	}
-	if v := os.Getenv("M_WORKSPACES_PATH"); v != "" {
-		cfg.Workspaces.Path = v
-	}
-	if v := os.Getenv("M_DEMO_MODE"); v != "" {
-		cfg.Server.DemoMode = v == "true" || v == "1"
-	}
-
-	// Validate required fields
-	if cfg.Server.APIKey == "" || cfg.Server.APIKey == "your-api-key-here" {
-		log.Printf("warning: API key not configured, set M_API_KEY environment variable")
-	}
-
-	return cfg, nil
 }

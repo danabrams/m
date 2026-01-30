@@ -4,12 +4,11 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"strconv"
 
 	"github.com/anthropics/m/internal/api"
+	"github.com/anthropics/m/internal/config"
 	"github.com/anthropics/m/internal/store"
 	"github.com/spf13/cobra"
-	"gopkg.in/yaml.v3"
 )
 
 var serveCmd = &cobra.Command{
@@ -19,32 +18,32 @@ var serveCmd = &cobra.Command{
 	RunE:  runServe,
 }
 
-var configPath string
+var serveConfigPath string
 
 func init() {
-	serveCmd.Flags().StringVarP(&configPath, "config", "c", "", "path to config file (default: ~/.m/config.yaml)")
-}
-
-// ServerConfig represents the server configuration file.
-type ServerConfig struct {
-	Server struct {
-		Port     int    `yaml:"port"`
-		APIKey   string `yaml:"api_key"`
-		DemoMode bool   `yaml:"demo_mode"`
-	} `yaml:"server"`
-	Storage struct {
-		Path string `yaml:"path"`
-	} `yaml:"storage"`
-	Workspaces struct {
-		Path string `yaml:"path"`
-	} `yaml:"workspaces"`
+	serveCmd.Flags().StringVarP(&serveConfigPath, "config", "c", "", "path to config file (default: ~/.m/config.yaml)")
 }
 
 func runServe(cmd *cobra.Command, args []string) error {
-	cfg, err := loadServerConfig()
+	// Determine config path
+	cfgPath := serveConfigPath
+	if cfgPath == "" {
+		cfgPath = defaultConfigPath()
+	}
+
+	cfg, err := config.Load(cfgPath)
 	if err != nil {
 		return err
 	}
+
+	// Validate required fields
+	if cfg.Server.APIKey == "" || cfg.Server.APIKey == "your-api-key-here" {
+		log.Printf("warning: API key not configured, set M_API_KEY or use 'm config set server/api_key <key>'")
+	}
+
+	// Log claude binary location for debugging
+	claudeBin := cfg.Claude.FindClaudeBinary()
+	log.Printf("using claude binary: %s", claudeBin)
 
 	// Ensure data directory exists
 	dbDir := filepath.Dir(cfg.Storage.Path)
@@ -74,52 +73,4 @@ func runServe(cmd *cobra.Command, args []string) error {
 
 	log.Printf("Starting server on port %d", cfg.Server.Port)
 	return srv.Run()
-}
-
-func loadServerConfig() (*ServerConfig, error) {
-	cfg := &ServerConfig{}
-
-	// Set defaults
-	cfg.Server.Port = 8080
-	cfg.Storage.Path = "./data/m.db"
-	cfg.Workspaces.Path = "./workspaces"
-
-	// Determine config path
-	path := configPath
-	if path == "" {
-		path = defaultConfigPath()
-	}
-
-	// Load config file if it exists
-	if data, err := os.ReadFile(path); err == nil {
-		if err := yaml.Unmarshal(data, cfg); err != nil {
-			return nil, err
-		}
-	}
-
-	// Environment variable overrides
-	if v := os.Getenv("M_PORT"); v != "" {
-		if port, err := strconv.Atoi(v); err == nil {
-			cfg.Server.Port = port
-		}
-	}
-	if v := os.Getenv("M_API_KEY"); v != "" {
-		cfg.Server.APIKey = v
-	}
-	if v := os.Getenv("M_DB_PATH"); v != "" {
-		cfg.Storage.Path = v
-	}
-	if v := os.Getenv("M_WORKSPACES_PATH"); v != "" {
-		cfg.Workspaces.Path = v
-	}
-	if v := os.Getenv("M_DEMO_MODE"); v != "" {
-		cfg.Server.DemoMode = v == "true" || v == "1"
-	}
-
-	// Validate required fields
-	if cfg.Server.APIKey == "" || cfg.Server.APIKey == "your-api-key-here" {
-		log.Printf("warning: API key not configured, set M_API_KEY or use 'm config set server/api_key <key>'")
-	}
-
-	return cfg, nil
 }
