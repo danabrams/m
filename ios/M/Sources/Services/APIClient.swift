@@ -112,7 +112,7 @@ final class APIClient {
 
     /// Registers device for push notifications.
     func registerDevice(token: String) async throws {
-        let request = RegisterDeviceRequest(token: token, platform: "ios")
+        let request = RegisterDeviceRequest(token: token, platform: .ios)
         try await post("/api/devices", body: request)
     }
 

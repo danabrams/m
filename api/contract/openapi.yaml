@@ -46,7 +46,6 @@ components:
       required:
         - id
         - name
-        - git_url
       properties:
         id:
           type: string
@@ -54,17 +53,18 @@ components:
           type: string
         git_url:
           type: string
+          nullable: true
 
     RepoCreate:
       type: object
       required:
         - name
-        - git_url
       properties:
         name:
           type: string
         git_url:
           type: string
+          nullable: true
 
     Run:
       type: object
@@ -73,6 +73,8 @@ components:
         - repo_id
         - prompt
         - state
+        - created_at
+        - updated_at
       properties:
         id:
           type: string
@@ -83,13 +85,18 @@ components:
         state:
           type: string
           enum:
-            - pending
             - running
             - waiting_approval
             - waiting_input
             - completed
             - cancelled
             - failed
+        created_at:
+          type: integer
+          description: Unix timestamp
+        updated_at:
+          type: integer
+          description: Unix timestamp
 
     RunCreate:
       type: object
