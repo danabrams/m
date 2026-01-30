@@ -1,0 +1,302 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://m.example.com/schemas/events.schema.json",
+  "title": "M Event Schema",
+  "description": "JSON Schema for all event types in Project M. Events are append-only and ordered by monotonic seq per run.",
+
+  "$defs": {
+    "uuid": {
+      "type": "string",
+      "format": "uuid",
+      "description": "UUID v4 identifier"
+    },
+
+    "event": {
+      "type": "object",
+      "description": "Base event envelope. All state changes are represented as events.",
+      "required": ["id", "run_id", "seq", "type", "data", "created_at"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/uuid",
+          "description": "Unique event identifier"
+        },
+        "run_id": {
+          "$ref": "#/$defs/uuid",
+          "description": "Run this event belongs to"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Monotonically increasing sequence number per run, starting at 1. Gap-free within a run."
+        },
+        "type": {
+          "$ref": "#/$defs/eventType",
+          "description": "Event type discriminator"
+        },
+        "data": {
+          "description": "Event-specific payload, varies by type"
+        },
+        "created_at": {
+          "type": "integer",
+          "description": "Unix timestamp in milliseconds"
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "run_started" } } },
+          "then": { "properties": { "data": { "$ref": "#/$defs/runStartedData" } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "stdout" } } },
+          "then": { "properties": { "data": { "$ref": "#/$defs/stdoutData" } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "stderr" } } },
+          "then": { "properties": { "data": { "$ref": "#/$defs/stderrData" } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "tool_call_start" } } },
+          "then": { "properties": { "data": { "$ref": "#/$defs/toolCallStartData" } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "tool_call_end" } } },
+          "then": { "properties": { "data": { "$ref": "#/$defs/toolCallEndData" } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "approval_requested" } } },
+          "then": { "properties": { "data": { "$ref": "#/$defs/approvalRequestedData" } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "approval_resolved" } } },
+          "then": { "properties": { "data": { "$ref": "#/$defs/approvalResolvedData" } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "input_requested" } } },
+          "then": { "properties": { "data": { "$ref": "#/$defs/inputRequestedData" } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "input_received" } } },
+          "then": { "properties": { "data": { "$ref": "#/$defs/inputReceivedData" } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "run_completed" } } },
+          "then": { "properties": { "data": { "$ref": "#/$defs/runCompletedData" } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "run_failed" } } },
+          "then": { "properties": { "data": { "$ref": "#/$defs/runFailedData" } } }
+        },
+        {
+          "if": { "properties": { "type": { "const": "run_cancelled" } } },
+          "then": { "properties": { "data": { "$ref": "#/$defs/runCancelledData" } } }
+        }
+      ]
+    },
+
+    "eventType": {
+      "type": "string",
+      "enum": [
+        "run_started",
+        "stdout",
+        "stderr",
+        "tool_call_start",
+        "tool_call_end",
+        "approval_requested",
+        "approval_resolved",
+        "input_requested",
+        "input_received",
+        "run_completed",
+        "run_failed",
+        "run_cancelled"
+      ],
+      "description": "All valid event types"
+    },
+
+    "runStartedData": {
+      "type": "object",
+      "description": "Emitted when run begins. Not shown in UI feed (implied).",
+      "additionalProperties": false
+    },
+
+    "stdoutData": {
+      "type": "object",
+      "description": "Agent stdout output. May be batched or chunked.",
+      "required": ["text"],
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "Output text content"
+        }
+      }
+    },
+
+    "stderrData": {
+      "type": "object",
+      "description": "Agent stderr output. May be batched or chunked.",
+      "required": ["text"],
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "Error text content"
+        }
+      }
+    },
+
+    "toolCallStartData": {
+      "type": "object",
+      "description": "Fires when agent begins a tool call. Paired with tool_call_end by call_id.",
+      "required": ["call_id", "tool", "input"],
+      "additionalProperties": false,
+      "properties": {
+        "call_id": {
+          "type": "string",
+          "description": "Unique identifier for this tool call, used to pair with tool_call_end"
+        },
+        "tool": {
+          "type": "string",
+          "description": "Tool name (e.g., 'Edit', 'Bash', 'Read')"
+        },
+        "input": {
+          "type": "object",
+          "description": "Tool-specific input parameters"
+        }
+      }
+    },
+
+    "toolCallEndData": {
+      "type": "object",
+      "description": "Fires on tool call completion. Paired with tool_call_start by call_id.",
+      "required": ["call_id", "tool", "success", "duration_ms"],
+      "additionalProperties": false,
+      "properties": {
+        "call_id": {
+          "type": "string",
+          "description": "Unique identifier matching the tool_call_start"
+        },
+        "tool": {
+          "type": "string",
+          "description": "Tool name (must match tool_call_start)"
+        },
+        "success": {
+          "type": "boolean",
+          "description": "Whether the tool call succeeded"
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Duration of tool execution in milliseconds"
+        },
+        "error": {
+          "type": ["string", "null"],
+          "description": "Error message if success is false, null otherwise"
+        }
+      }
+    },
+
+    "approvalType": {
+      "type": "string",
+      "enum": ["diff", "command", "generic"],
+      "description": "Type of approval being requested"
+    },
+
+    "approvalRequestedData": {
+      "type": "object",
+      "description": "Links to approvals table via approval_id. The approval payload lives in approvals.payload, not in the event.",
+      "required": ["approval_id", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "approval_id": {
+          "$ref": "#/$defs/uuid",
+          "description": "Reference to approval record for payload details"
+        },
+        "type": {
+          "$ref": "#/$defs/approvalType",
+          "description": "Type of approval: diff (file changes), command (shell), or generic"
+        }
+      }
+    },
+
+    "approvalResolvedData": {
+      "type": "object",
+      "description": "Response to an approval request.",
+      "required": ["approval_id", "approved"],
+      "additionalProperties": false,
+      "properties": {
+        "approval_id": {
+          "$ref": "#/$defs/uuid",
+          "description": "Reference to the resolved approval"
+        },
+        "approved": {
+          "type": "boolean",
+          "description": "Whether the approval was granted"
+        },
+        "reason": {
+          "type": ["string", "null"],
+          "description": "Optional reason for the decision"
+        }
+      }
+    },
+
+    "inputRequestedData": {
+      "type": "object",
+      "description": "Agent's question for display in the Input Prompt sheet.",
+      "required": ["question"],
+      "additionalProperties": false,
+      "properties": {
+        "question": {
+          "type": "string",
+          "description": "The question being asked of the user"
+        }
+      }
+    },
+
+    "inputReceivedData": {
+      "type": "object",
+      "description": "Records the user's response to an input request.",
+      "required": ["text"],
+      "additionalProperties": false,
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "The user's response text"
+        }
+      }
+    },
+
+    "runCompletedData": {
+      "type": "object",
+      "description": "Agent finished successfully (exit code 0).",
+      "additionalProperties": false
+    },
+
+    "runFailedData": {
+      "type": "object",
+      "description": "Agent crashed or error occurred.",
+      "required": ["error"],
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "type": "string",
+          "description": "Error message describing the failure"
+        }
+      }
+    },
+
+    "runCancelledData": {
+      "type": "object",
+      "description": "User cancelled the run.",
+      "required": ["reason"],
+      "additionalProperties": false,
+      "properties": {
+        "reason": {
+          "type": "string",
+          "description": "Cancellation reason (e.g., 'user')"
+        }
+      }
+    }
+  },
+
+  "$ref": "#/$defs/event"
+}
