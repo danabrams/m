@@ -6,6 +6,7 @@ info:
 
 servers:
   - url: /api
+    description: API base path
 
 security:
   - BearerAuth: []
@@ -70,6 +71,7 @@ components:
       required:
         - id
         - repo_id
+        - prompt
         - state
       properties:
         id:
@@ -97,7 +99,7 @@ components:
         prompt:
           type: string
 
-    InputRequest:
+    RunInput:
       type: object
       required:
         - text
@@ -110,11 +112,16 @@ components:
       required:
         - id
         - run_id
+        - type
         - payload
       properties:
         id:
           type: string
         run_id:
+          type: string
+        type:
+          type: string
+        tool:
           type: string
         payload:
           type: object
@@ -164,6 +171,33 @@ components:
         payload:
           type: object
 
+    WebSocketEvent:
+      type: object
+      required:
+        - type
+      properties:
+        type:
+          type: string
+          enum:
+            - event
+            - state
+            - ping
+        event:
+          type: object
+          properties:
+            id:
+              type: string
+            seq:
+              type: integer
+            type:
+              type: string
+            data:
+              type: object
+            created_at:
+              type: integer
+        state:
+          type: string
+
   responses:
     BadRequest:
       description: Invalid input
@@ -177,7 +211,7 @@ components:
               message: Invalid request body
 
     Unauthorized:
-      description: Unauthorized
+      description: Missing or invalid authentication
       content:
         application/json:
           schema:
@@ -415,7 +449,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/InputRequest'
+              $ref: '#/components/schemas/RunInput'
       responses:
         '200':
           description: Input accepted
@@ -432,10 +466,55 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
 
+  /runs/{id}/events:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: from_seq
+        in: query
+        required: false
+        schema:
+          type: integer
+        description: Replay events with seq > from_seq. If omitted, all events are replayed.
+
+    get:
+      summary: WebSocket events stream
+      description: |
+        WebSocket endpoint for streaming run events.
+
+        **Connection:** `ws://host/api/runs/:id/events?from_seq=N`
+
+        **Authentication:** Authorization header with Bearer token
+
+        **Server -> Client Messages:**
+        - `{"type": "event", "event": {"id": "...", "seq": 1, "type": "stdout", "data": {...}, "created_at": 1234567890}}`
+        - `{"type": "state", "state": "waiting_approval"}`
+        - `{"type": "ping"}`
+
+        **Client -> Server Messages:**
+        - `{"type": "pong"}`
+
+        **Replay Behavior:**
+        On connect, server sends all events where seq > from_seq (or all events if from_seq omitted), then streams live events.
+      operationId: streamRunEvents
+      tags:
+        - Runs
+        - WebSocket
+      responses:
+        '101':
+          description: WebSocket upgrade successful
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /approvals/pending:
     get:
       summary: List pending approvals
-      description: List all pending approvals (for banner)
+      description: List all pending approvals (for banner display)
       operationId: listPendingApprovals
       tags:
         - Approvals
@@ -597,50 +676,6 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
-  /runs/{id}/events:
-    parameters:
-      - name: id
-        in: path
-        required: true
-        schema:
-          type: string
-      - name: from_seq
-        in: query
-        required: false
-        schema:
-          type: integer
-        description: Replay events with seq > from_seq
-
-    get:
-      summary: WebSocket events stream
-      description: |
-        WebSocket endpoint for streaming run events.
-
-        **Connection:** `ws://host/api/runs/:id/events?from_seq=N`
-
-        **Authentication:** Authorization header with Bearer token
-
-        **Server -> Client Messages:**
-        - `{"type": "event", "event": {"id": "...", "seq": 1, "type": "stdout", "data": {...}, "created_at": 1234567890}}`
-        - `{"type": "state", "state": "waiting_approval"}`
-        - `{"type": "ping"}`
-
-        **Client -> Server Messages:**
-        - `{"type": "pong"}`
-
-        **Replay Behavior:**
-        On connect, server sends all events where seq > from_seq (or all events if from_seq omitted), then streams live events.
-      operationId: streamRunEvents
-      tags:
-        - Runs
-      responses:
-        '101':
-          description: WebSocket upgrade
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '404':
-          $ref: '#/components/responses/NotFound'
-
 tags:
   - name: Repos
     description: Repository management
@@ -652,3 +687,5 @@ tags:
     description: Device registration for push notifications
   - name: Internal
     description: Internal endpoints for hooks (not for external use)
+  - name: WebSocket
+    description: Real-time event streaming
