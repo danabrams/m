@@ -16,7 +16,8 @@ let package = Package(
     targets: [
         .target(
             name: "M",
-            path: "Sources"
+            path: "Sources",
+            exclude: ["App/MApp.swift"]
         ),
         .testTarget(
             name: "MTests",
